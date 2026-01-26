@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 SimiC Preprocessing Pipeline
-Handles data loading, MAGIC imputation, gene selection, and file preparation.
+This script handles data loading, MAGIC imputation, gene selection, and file preparation for SimiCPipeline run.
 """
 
 import numpy as np
@@ -17,9 +17,6 @@ try:
     import anndata as ad
 except ImportError:
     raise ImportError("Anndata is required. Please install.")
-# MAGIC imputation
-# import magic
-
 
 class SimiCPreprocess:
     """
@@ -45,12 +42,12 @@ class MagicPipeline(SimiCPreprocess):
     """
             
     def __init__(self, 
-                 input_data: Union[ad.AnnData, pd.DataFrame],
+                 input_data: ad.AnnData,
                  project_dir: Union[str, Path],
                  magic_output_file: str = 'magic_data_allcells_sqrt.pickle',
                  filtered: bool = False):
         """
-        Initialize MAGIC pipeline.  
+        Initialize MAGIC pipeline. Takes AnnData and sparse matrix if needed. Creates output directory.
 
         Args:
             project_dir:   Directory for output files
@@ -59,29 +56,11 @@ class MagicPipeline(SimiCPreprocess):
         """
         super().__init__(project_dir)
         # Initialize data containers
-        if isinstance(input_data, pd.DataFrame):
-            # Convert DataFrame to AnnData
-            
-            obs=pd.DataFrame(index=input_data.index)
-            var=pd.DataFrame(index=input_data.columns)
-            # Convert to sparse if not already
-            try:
-                import scipy
-                if not scipy.sparse.issparse(input_data.values):
-                    matx = scipy.sparse.csr_matrix(input_data.values)
-                else:
-                    matx = input_data.values
-            except:
-                print("Warning: scipy is not installed, cannot convert to sparse matrix.")
-                matx = input_data.values
-            self.adata = ad.AnnData(
-                    X=matx,
-                    obs=obs,
-                    var=var)
-        else:
-            self.adata = input_data
-            
+        if not hasattr(input_data.raw, 'X'):
+            print("Warning: No raw attribute found in AnnData object")
 
+        self.adata = input_data
+            
         # Create MAGIC output directory
         self.magic_output_dir = self.project_dir / 'magic_output'
         self.magic_output_dir.mkdir(exist_ok=True)
@@ -106,24 +85,24 @@ class MagicPipeline(SimiCPreprocess):
         
         # Data status
         if self.adata is None:
-            lines.append("  data=None,")
+            lines.append("  data = None,")
         else:
-            lines.append(f"  data=AnnData object with n_obs × n_vars = {self.adata.shape[0]} × {self.adata.shape[1]},")
+            lines.append(f"  data = AnnData object with (n_obs × n_vars) = {self.adata.shape[0]} × {self.adata.shape[1]},")
         
         # Filtered status
-        lines.append(f"  filtered={self._filtered},")
+        lines.append(f"  filtered = {self._filtered},")
         
         # Imputed status
-        lines.append(f"  imputed={self._imputed},")
+        lines.append(f"  imputed = {self._imputed},")
         
         # MAGIC data dimensions if available
         if self.magic_adata is not None:
-            lines.append(f"  magic_data=AnnData object with n_obs × n_vars = {self.magic_adata.shape[0]} × {self.magic_adata.shape[1]},")
+            lines.append(f"  magic_data = AnnData object with n_obs × n_vars = {self.magic_adata.shape[0]} × {self.magic_adata.shape[1]},")
         else:
-            lines.append("  magic_data=None,")
+            lines.append("  magic_data = None,")
         
         # Output directory
-        lines.append(f"  project_dir='{self.project_dir}'")
+        lines.append(f"  project_dir = '{self.project_dir}'")
         
         lines.append(")")
         
@@ -133,10 +112,9 @@ class MagicPipeline(SimiCPreprocess):
                                min_cells_per_gene: int = 10,
                                min_umis_per_cell: int = 500) -> 'MagicPipeline':
         """
-        Filter cells and genes based on expression thresholds.
-        
-        Note: The original logic filters genes by number of cells expressing them,
-        and cells by total UMI counts.
+        Filters raw input data based on desired thresholds.
+        Genes are filtered by number of cells expressing them,
+        Cells are filtered by total UMI counts per cell after gene filtering.
 
         Args:
             min_cells_per_gene: Minimum number of cells that must express a gene (gene filtering)
@@ -148,14 +126,17 @@ class MagicPipeline(SimiCPreprocess):
         if self.adata is None:
             raise ValueError("No data loaded. Please load data first using load_from_matrix_market() or load_from_anndata().")
         
+        if not hasattr(self.adata.raw, 'X'):
+            raise ValueError("No raw attribute found in AnnData object. Please ensure raw counts are stored in adata.raw.X before filtering. You can manually set it using: adata.raw = adata.copy()")
+        
         if self._filtered:
             print("Warning: Data has already been filtered. Filtering again!")
         
         print("\nFiltering cells and genes...")
         print(f"Before filtering: {self.adata.shape[0]} cells x {self.adata.shape[1]} genes")
         
-        # GENES x CELLS
-        X = self.adata.X
+        # Get Raw counts (cells x genes)
+        X = self.adata.raw.X.copy()
 
         # 1. Filter genes - keep genes expressed in more than min_cells_per_gene cells
         bool_mat = X > 0
@@ -165,7 +146,8 @@ class MagicPipeline(SimiCPreprocess):
             raise ValueError("All genes filtered out!  Consider lowering min_cells_per_gene.")
         
         assert keep_genes.shape[0] == X.shape[1], "Gene mask shape mismatch"
-        print(f"Keeping {sum(keep_genes)}/{len(keep_genes)} genes")
+        pct_g_kept = sum(keep_genes) / len(keep_genes) * 100
+        print(f"Keeping {sum(keep_genes)}/{len(keep_genes)} genes ({pct_g_kept:.2f}%)")
         
         X = X[:, keep_genes]
         
@@ -176,20 +158,21 @@ class MagicPipeline(SimiCPreprocess):
             raise ValueError("All cells filtered out! Consider lowering min_umis_per_cell.")
         
         assert keep_cells.shape[0] == X.shape[0], "Cell mask shape mismatch"
-        print(f"Keeping {sum(keep_cells)}/{len(keep_cells)} cells")
+        pct_c_kept = sum(keep_cells) / len(keep_cells) * 100
+        print(f"Keeping {sum(keep_cells)}/{len(keep_cells)} cells ({pct_c_kept:.2f}%)")
         
         if sum(keep_cells) == len(keep_cells):
             print("All cells pass the filter!")
-        
-        X = X[keep_cells, :]
-        # Update AnnData object
-        self.adata = ad.AnnData(
+        X = X[keep_cells,:]
+        # Update AnnData object (asumes X and raw.X have same shape and obs/var)
+        raw_adata = ad.AnnData(
             X=X,
             obs=self.adata.obs.iloc[keep_cells].copy(),
             var=self.adata.var.iloc[keep_genes].copy()
         )
-        
-        print(f"After filtering: {self.adata.shape[0]} cells x {self.adata.shape[1]} genes")
+        self.adata = self.adata[keep_cells, keep_genes].copy()
+        self.adata.raw = raw_adata
+        print(f"After filtering: {self.adata.raw.shape[0]} cells x {self.adata.raw.shape[1]} genes")
         
         self._filtered = True
         self._imputed = False  # Reset imputation flag since data changed
@@ -199,13 +182,14 @@ class MagicPipeline(SimiCPreprocess):
     def normalize_data(self) -> 'MagicPipeline':
         """
         Normalize data using library size normalization and square root transformation.
-
+        Note: It overides adata.X with normalized data and removes adata.raw slot
         Returns:
             Self for method chaining
         """
         if self.adata is None:
             raise ValueError("No data loaded. Please load data first using load_from_matrix_market() or load_from_anndata().")
-        
+        if not hasattr(self.adata.raw, 'X'):
+            raise ValueError("No raw attribute found in AnnData object. Please ensure raw counts are stored in adata.raw.X before filtering. You can manually set it using: adata.raw = adata.copy()")
         print("\nNormalizing data...")
         try:
             import scprep
@@ -213,9 +197,10 @@ class MagicPipeline(SimiCPreprocess):
             raise ImportError("scprep is required for normalization. Please install or normalize data externally.")        
         
         # Normalize the matrix. Make sure is cells x genes matrix because scprep expects [n_samples, n_features]
-        matrix_sparse_norm = scprep.normalize.library_size_normalize(self.adata.X)
+        matrix_sparse_norm = scprep.normalize.library_size_normalize(self.adata.raw.X)
         sqrt_mat = np.sqrt(matrix_sparse_norm)
         
+        # Update AnnData object (from here on we work with normalized data and not raw counts)
         # Update AnnData object
         self.adata = ad.AnnData(
             X=sqrt_mat,
@@ -233,15 +218,15 @@ class MagicPipeline(SimiCPreprocess):
                   n_jobs: Optional[int] = -2,
                    **kwargs) -> 'MagicPipeline':
         """
-        Run MAGIC imputation on the data.
+        Run MAGIC imputation on the data. It uses the normalized data in self.adata.X.
 
-        Args:
-            t: Number of diffusion steps
-            knn: Number of nearest neighbors
-            decay: Decay rate for kernel
-            sqrt_transform: Whether to apply square root transformation
-            n_jobs: Number of jobs for parallel processing
+        args:
+            save_data: Whether to save the MAGIC-imputed data to file
+            n_jobs: Number of jobs for parallel processing. -1 Use all CPUs, -2 use all but one
             **kwargs:  Additional arguments to pass to magic. MAGIC()
+                        t: Number of diffusion steps
+                        knn: Number of nearest neighbors
+                        decay: Decay rate for kernel
             
         Returns:
             Self for method chaining
@@ -291,12 +276,13 @@ class MagicPipeline(SimiCPreprocess):
         output_file = Path(filepath) if filepath else self.magic_output_file
         # Check extension
         if output_file.suffix not in ['.pickle', '.h5ad']:
-            raise ValueError(f"Unsupported file format: {output_file.suffix}. Use .pickle or .h5ad")
+            print(f"Unsupported file format: {output_file.suffix}. pickle will be appended to filename.")
+            output_file = output_file.with_suffix('.pickle')
         # Check that output_path file exists and print warning
         if output_file.exists():
             print(f"Warning: Output file {output_file} already exists and will be overwritten.")
         
-        print(f"\nSaving MAGIC-imputed data to {output_file}...")
+        print(f"\nSaving MAGIC-imputed data to {output_file}")
         
         # Save based on file extension
         if output_file.suffix == '.pickle':
@@ -305,7 +291,10 @@ class MagicPipeline(SimiCPreprocess):
         elif output_file.suffix == '.h5ad':
             self.magic_adata.write_h5ad(output_file)
         else:
-            raise ValueError(f"Unsupported file format: {output_file.suffix}. Use .pickle or .h5ad")
+            print(f"Unsupported file format: {output_file.suffix}. Will use default name: 'magic_data_allcells_sqrt.pickle'")
+            output_file = self.magic_output_dir / 'magic_data_allcells_sqrt.pickle'
+            with open(output_file, 'wb') as f:
+                pickle.dump(self.magic_adata, f)
         
         print(f"Saved successfully to {output_file}")
     
@@ -316,22 +305,6 @@ class MagicPipeline(SimiCPreprocess):
     def is_imputed(self) -> bool:
         """Check if MAGIC imputation has been run."""
         return self._imputed
-    
-    def get_pipeline_status(self) -> dict:
-        """
-        Get current state of the pipeline. 
-        
-        Returns:
-            Dictionary with pipeline state information
-        """
-        return {
-            'data_loaded': self.adata is not None,
-            'filtered':  self._filtered,
-            'imputed': self._imputed,
-            'n_cells': self.adata.shape[0] if self.adata is not None else 0,
-            'n_genes': self.adata.shape[1] if self.adata is not None else 0,
-            'magic_data_available': self.magic_adata is not None
-        }
 
 
 class ExperimentSetup(SimiCPreprocess):
@@ -436,7 +409,7 @@ class ExperimentSetup(SimiCPreprocess):
         
         # MAD calculation
         # Calculation of Median Absolute Deviation (MAD)
-        mymean = expr_matrix.mean(axis=1)  # Mean expression of each gene (i) across all cells (j)
+        mymean = expr_matrix.mean(axis=1).to_numpy()  # Mean expression of each gene (i) across all cells (j)
         dev_mat = expr_matrix.to_numpy() - mymean[:, None]  # Deviation matrix Xij - mean(Xi)
         mymad = np.median(np.abs(dev_mat), axis=1)  # Median of the absolute deviation of each gene (i) across all cells (j)
         MAD = pd.Series(mymad, index=expr_matrix.index)  # Create a pandas series with gene names as index
@@ -455,7 +428,7 @@ class ExperimentSetup(SimiCPreprocess):
         
         # Select the top MAD target genes
         target_set = set(expr_matrix.index).difference(set(self.tf_list))  # Get target genes
-        TARGETs = MAD[target_set]  # No need to reindex as MAD is generated from expr_matrix
+        TARGETs = MAD[list(target_set)]  # No need to reindex as MAD is generated from expr_matrix
         
         print("Removing " + str(sum(TARGETs == 0)) + " targets with MAD = 0")  # remove TARGETs with MAD = 0
         TARGETs = TARGETs[TARGETs > 0]
