@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import subprocess as sp
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 from importlib.resources import files
 
 class SimiCPipeline:
@@ -24,33 +24,33 @@ class SimiCPipeline:
 
     def __init__(self, 
                  project_dir: str,
-                 run_name: Optional[str] = None,
-                 n_tfs: int = 100,
-                 n_targets: int = 1000,
-                 new_run: bool = True)-> None:
+                 run_name: Optional[str] = None)-> None:
         """
         Initialize the SimiC pipeline.
 
         Args:
             project_dir (str): Working directory for input/output
             run_name (str): Optional name for this run (used in output filenames)
-            n_tfs (int): Number of transcription factors
-            n_targets (int): Number of target genes
         """
+        # Set project directory and run name
         self.project_dir = Path(project_dir)
         self.run_name = run_name if run_name else "simic_run"
-        self.n_tfs = n_tfs
-        self.n_targets = n_targets
         
-        # Initialize paths
+        # Initialize directory paths
         self.input_path = self.project_dir / "inputFiles"
         self.output_path = self.project_dir / "outputSimic"
         self.matrices_path = self.output_path / "matrices"
         
         # Create output directories if they don't exist
+        if not self.project_dir.exists():
+            print("Creating project directory...")
+            self.project_dir.mkdir(parents=True, exist_ok=True)
+        self.output_path.mkdir(parents=True, exist_ok=True)
         self.matrices_path.mkdir(parents=True, exist_ok=True)
         
         # Default parameters
+        self.n_tfs = 100 # Number of transcription factorse
+        self.n_targets = 1000 # Number of target genes
         self.lambda1 = 1e-2 # L1 regularization parameter (sparsity)
         self.lambda2 = 1e-5 # L2 regularization parameter (network similarity)e        
         self.k_cluster = None # Number of clusters of K means; only if phenotype assignment is not provided will assign labels based on them.b        
@@ -58,42 +58,54 @@ class SimiCPipeline:
         self.max_rcd_iter = 500000 # Maximum number of RCD iterations         
         self.df_with_label = False # Whether the input dataframe has labels in the last column or not. If not assignment file must be provided.         
         self.cross_val = False # Whether to perform cross-validation to select optimal lambdasf        
-        self._NF = 100 # Normalization factor
+        self._NF = 1 # Normalization factor for expression data (default 1.0, we expect data to be preprocessed).
         self.list_of_l1 = [1e-1, 1e-2,1e-3, 10] # List of L1 values for cross-validation
         self.list_of_l2 = [1e-1, 1e-2,1e-3, 10] # List of L2 values for cross-validationity constraint for Lipswitz constant (RCD process)
         # Timing
         self.timing = {}
-        
-    def set_paths(self, p2df=None, p2assignment=None, p2tf=None):
+
+# Path management functions       
+    def set_input_paths(self, 
+                  p2df: Union[str, Path],
+                  p2tf: Union[str, Path],
+                  p2assignment: Optional[Union[str, Path]] = None) -> None:
         """
         Set up all file paths for input and output.
         
         Args:
-            p2df (str): Custom path to expression matrix file. Must be a pickle file with a dataframe format (genes x cells).
-            p2assignment (str): Custom path to phenotype assignment file. Must be a plain text file 1 col with numbers. 0 for Basline. Should folow cell order in expression expression matrix.
+            p2df (str): Custom path to expression matrix file. Must be a pickle file with a dataframe.
+                        dataframe should be like (with optional label column):
+                                    gene1, gene2, ..., genek, label
+                            cell1:  x,     x,   , ..., x,   , type1
+                            cell2:  x,     x,   , ..., x,   , type2
+            p2assignment (str): Custom path to phenotype assignment file. Must be a plain text file 1 col with numbers (no header). 0 for baseline/control phenotype group. Should match cell order as in expression matrix.
             p2tf (str): Custom path to TF list file. Must be a pickle file with a list of TF names.
         """
         # Input paths - use custom paths if provided, otherwise raise error
-        if p2df:
-            self.p2df = Path(p2df)
-        else:
-            raise ValueError("Path to expression matrix dataframe (p2df) must be provided.")
-            
+        if not Path(p2df).exists():
+            raise FileNotFoundError("Invalid path to expression matrix dataframe (p2df).")
+        self.p2df = Path(p2df)
+
         if p2assignment:
             self.p2assignment = Path(p2assignment)
         else:
             print("WARNING: Path to phenotype assignment file (p2assignment) not provided. Clustering will be used if k_cluster is set.")
             
-        if p2tf:
-            self.p2tf = Path(p2tf)
-        else:
-            p2tf = files("simicpipeline.data").joinpath("Mus_musculus_TF.txt")
-            mouse_TF_df = pd.read_csv(p2tf,sep='\t')
-            mouse_TF = mouse_TF_df['Symbol']
+        if not Path(p2tf).exists():
+            print("WARNING: Path to TF list file (p2tf) not found. Using default mouse TF list.")
+            default_TFmouse = files("simicpipeline.data").joinpath("Mus_musculus_TF.txt")
+            mouse_TF_df = pd.read_csv(default_TFmouse, sep='\t')
+            mouse_TF = mouse_TF_df['Symbol'].to_list()
+            self.input_path.mkdir(parents=True, exist_ok=True)
             with open(self.input_path / "TF_list.pickle", 'wb') as f:
                 pickle.dump(mouse_TF, f)
             self.p2tf = self.input_path / "TF_list.pickle"
-        
+        else: 
+            self.p2tf = Path(p2tf)
+        # Set output paths based on run name and default parameters
+        self.set_output_paths()
+    
+    def set_output_paths(self) -> None:
         # Output paths
         self.run_path = self.matrices_path / self.run_name
         self.run_path.mkdir(parents=True, exist_ok=True)
@@ -103,88 +115,62 @@ class SimiCPipeline:
         self.p2auc_raw = self.run_path / f"{base_name}_wAUC_matrices.pickle"
         self.p2auc_filtered = self.run_path / f"{base_name}_wAUC_matrices_filtered_BIC.pickle"
     
-    def set_paths_custom(self, p2df=None, p2assignment=None, p2tf=None, p2simic_matrices = None, p2filtered_matrices = None, p2auc_raw = None, p2auc_filtered = None):
+    def set_paths_custom(self, 
+                         p2df: Union[str, Path],
+                         p2tf: Union[str, Path],
+                         p2assignment: Optional[Union[str, Path]] = None,
+                         p2simic_matrices: Optional[Union[str, Path]] = None, 
+                         p2filtered_matrices: Optional[Union[str, Path]] = None, 
+                         p2auc_raw: Optional[Union[str, Path]] = None, 
+                         p2auc_filtered: Optional[Union[str, Path]] = None):
         """
         Set up all file paths for input and output with custom paths (intended for loading previous results).
         
         Args:
             p2df (str): Custom path to expression matrix file. Must be a pickle file with a dataframe format (genes x cells).
-            p2assignment (str): Custom path to phenotype assignment file. Must be a plain text file 1 col with numbers. 0 for Basline. Should folow cell order in expression expression matrix.
             p2tf (str): Custom path to TF list file. Must be a pickle file with a list of TF names.
+            p2assignment (str): Custom path to phenotype assignment file. Must be a plain text file 1 col with numbers. 0 for Basline. Should folow cell order in expression expression matrix.
+            p2simic_matrices (str): Custom path to SimiC matrices file. Must be a pickle file.
+            p2filtered_matrices (str): Custom path to filtered matrices file. Must be a pickle file.
+            p2auc_raw (str): Custom path to AUC raw file. Must be a pickle file.
+            p2auc_filtered (str): Custom path to AUC filtered file. Must be a pickle file.
         """
         # Input paths - use custom paths if provided, otherwise raise error
-        if p2df:
-            self.p2df = Path(p2df)
-        else:
-            raise ValueError("Path to expression matrix dataframe (p2df) must be provided.")
-            
-        if p2assignment:
-            self.p2assignment = Path(p2assignment)
-        else:
-            raise ValueError("Path to phenotype assignment file (p2assignment) not provided. Clustering will be used if k_cluster is set.")
-            
-        if p2tf:
-            self.p2tf = Path(p2tf)
-        else:
-            raise ValueError("Path to TF list file (p2tf) must be provided.")
-        # Output paths
-        if p2simic_matrices:
-            self.p2simic_matrices = Path(p2simic_matrices)
-            if not self.p2simic_matrices.exists():
-                raise FileNotFoundError(f"SimiC matrices file not found: {self.p2simic_matrices}")
-        else:
-            raise ValueError("Path to SimiC matrices file (p2simic_matrices) must be provided.")
-        if p2filtered_matrices:
-            self.p2filtered_matrices = Path(p2filtered_matrices)
-        else:
-            raise ValueError("Path to filtered matrices file (p2filtered_matrices) must be provided.")
-        if p2auc_raw:
-            self.p2auc_raw = Path(p2auc_raw)  
-        else:
-            raise ValueError("Path to AUC raw file (p2auc_raw) must be provided.")
-        if p2auc_filtered: 
-            self.p2auc_filtered = Path(p2auc_filtered)
-        else:
-            raise ValueError("Path to AUC filtered file (p2auc_filtered) must be provided.")
-    
-    def set_parameters(self, lambda1=None, lambda2=None, k_cluster=None, similarity=None,
-                       max_rcd_iter=None, cross_val=None,list_of_l1=None,list_of_l2=None, _NF=None, run_name=None):
-        """
-        Set pipeline parameters.
+        if not Path(p2df).exists():
+            raise FileNotFoundError("Invalid path to expression matrix dataframe (p2df).")
+        self.p2df = Path(p2df)
 
-        Args:
-            lambda1 (float): L1 regularization parameter (sparsity)
-            lambda2 (float): L2 regularization parameter (network similarity)
-            k_cluster (int): Number of clusters of K means; only if phenotype assignment is not provided will assign labels based on them.
-            similarity (bool): Enables similarity constraint for Lipswitz constant (RCD process)
-            max_rcd_iter (int): Maximum RCD iterations
-            cross_val (bool): Whether to perform cross-validation to select optimal lambdas
-            list_of_l1 (list): List of L1 values for cross-validation
-            list_of_l2 (list): List of L2 values for cross-validation
-            _NF (float): Normalization factor for expression data
-            run_name (str): Name for this run
-        """
-        if lambda1 is not None:
-            self.lambda1 = lambda1
-        if lambda2 is not None:
-            self.lambda2 = lambda2
-        if k_cluster is not None:
-            self.k_cluster = k_cluster
-        if similarity is not None:
-            self.similarity = similarity
-        if max_rcd_iter is not None:
-            self.max_rcd_iter = max_rcd_iter
-        if cross_val is not None:
-            self.cross_val = cross_val
-            self.list_of_l1 = list_of_l1
-            self.list_of_l2 = list_of_l2
-        if _NF is not None:
-            self._NF = _NF
-        if run_name is not None:
-            self.run_name = run_name
+        if not Path(p2assignment).exists():
+            raise FileNotFoundError("Invalid path to phenotype assignment file (p2assignment).")
+        self.p2assignment = Path(p2assignment)
+    
+        if not Path(p2tf).exists():
+            raise FileNotFoundError("Invalid path to TF list file (p2tf).")
+        self.p2tf = Path(p2tf)
         
-        # Update paths based on new parameters
-        self.set_paths(self.p2df, self.p2assignment, self.p2tf)
+        # Output paths
+        if not Path(p2simic_matrices).exists():
+            raise FileNotFoundError(f"Invalid path to SimiC matrices file (p2simic_matrices).")
+        self.p2simic_matrices = Path(p2simic_matrices)
+        
+        if not Path(p2filtered_matrices).exists():
+            print(f"WARNING: Path to filtered matrices file (p2filtered_matrices) not found. \n Trying with default name")
+            p2filtered_matrices_new = p2filtered_matrices.with_stem(p2filtered_matrices.stem +"filtered_BIC")
+            if not Path(p2filtered_matrices_new).exists():
+                print("Warning: Alternative filtered matrices file not found. Will continue without it. Please run `filter_weights")    
+                self.p2filtered_matrices = Path(p2filtered_matrices) # Keep user name
+            else:
+                self.p2filtered_matrices = Path(p2filtered_matrices_new) # Change to alternative name
+        else: 
+            self.p2filtered_matrices = Path(p2filtered_matrices)
+        
+        if not Path(p2auc_raw).exists():
+            print(f"WARNING: Path to AUC raw file (p2auc_raw) not found. \n Will continue without it. Please run `calculate_auc`")
+        self.p2auc_raw = p2auc_raw # Keep user name
+        
+        if not Path(p2auc_filtered):
+            print(f"WARNING: Path to AUC raw file (p2auc_raw) not found. \n Will continue without it. Please run `calculate_auc(use_filtered = True)`") 
+        self.p2auc_filtered = Path(p2auc_filtered)
 
     def validate_inputs(self):
         """Validate that all required input files exist."""
@@ -197,15 +183,87 @@ class SimiCPipeline:
             raise FileNotFoundError(f"Missing required input files: {missing_files}")
         
         print("✓ All required input files found")
+# Parameter management functions 
+    def set_parameters(self,
+                       n_tfs: Optional[int] = None,
+                       n_targets: Optional[int] = None,
+                       lambda1: Optional[float] = None,
+                       lambda2: Optional[float] = None,
+                       k_cluster: Optional[int] = None,
+                       numIter: Optional[int] = None,
+                       similarity: Optional[bool] = None,
+                       max_rcd_iter: Optional[int] = None,
+                       cross_val: Optional[bool] = None,
+                       num_rep: Optional[int] = None,
+                       list_of_l1: Optional[list] = None,
+                       list_of_l2: Optional[list] = None,
+                       _NF: Optional[float] = None,
+                       run_name: str = None):
+        """
+        Set pipeline parameters.
 
-    def run_simic_regression(self):
-        """Run the SimiC LASSO regression."""
-        from simicpipeline.core.clus_regression_fixed import simicLASSO_op
+        Args:
+            n_tfs (int): Number of transcription factors
+            n_targets (int): Number of target genes
+            lambda1 (float): L1 regularization parameter (sparsity)
+            lambda2 (float): L2 regularization parameter (network similarity)
+            k_cluster (int): Number of clusters of K means; only if phenotype assignment is not provided will assign labels based on them.
+            numIter (int): Maximum number of iterations of the k-means algorithm for a single run.
+            similarity (bool): Enables similarity constraint for Lipswitz constant (RCD process)
+            max_rcd_iter (int): Maximum RCD iterations
+            cross_val (bool): Whether to perform cross-validation to select optimal lambdas
+            num_rep (int): Number of repetitions for test evaluation
+            list_of_l1 (list): List of L1 values for cross-validation
+            list_of_l2 (list): List of L2 values for cross-validation
+            _NF (float): # Normalization factor for expression data (default 1.0, we expect data to be preprocessed).
+            run_name (str): Name for this run
+        """
+        # Update parameters if provided
+        if n_tfs is not None:
+            self.n_tfs = n_tfs
+        if n_targets is not None:
+            self.n_targets = n_targets
+        if lambda1 is not None:
+            self.lambda1 = lambda1
+        if lambda2 is not None:
+            self.lambda2 = lambda2
+        if k_cluster is not None:
+            self.k_cluster = k_cluster
+        if numIter is not None:
+            self.numIter = numIter
+        if similarity is not None:
+            self.similarity = similarity
+        if max_rcd_iter is not None:
+            self.max_rcd_iter = max_rcd_iter
+        if cross_val is not None:
+            self.cross_val = cross_val
+            self.list_of_l1 = list_of_l1
+            self.list_of_l2 = list_of_l2
+        if num_rep is not None:
+            self.num_rep = num_rep
+        if _NF is not None:
+            self._NF = _NF
+        if run_name is not None:
+            self.run_name = run_name
         
+        # Update paths based on new parameters
+        self.set_output_paths()
+
+# Core pipeline functions
+    def run_simic_regression(self):
+        """
+        Run the SimiC LASSO regression. 
+        This function uses the parameters and paths set in the pipeline instance and
+        the simicLASSO_op function from the clus_regression_fixed module 
+        (almost identical to what is found in Jianhao's github: SimiC/code/simiclasso/clus_regression.py ).
+        """
+        from simicpipeline.core.clus_regression_fixed import simicLASSO_op
+        import numpy as np
         print("\n" + "="*50)
         print(f"Running SimiC Regression")
         print(f"Run name: {self.run_name}")
-        
+        self.validate_inputs()
+
         if self.cross_val:
             print(f"Running cross-validation with following lambdas: {self.list_of_l1} (L1), {self.list_of_l2} (L2)")
         else:
@@ -217,19 +275,21 @@ class SimiCPipeline:
         
         simicLASSO_op(
             p2df=str(self.p2df),
-            p2assignment=str(self.p2assignment),
             p2tf=str(self.p2tf),
+            p2assignment=str(self.p2assignment) if self.p2assignment is not None else None,
             p2saved_file=str(self.p2simic_matrices),
             similarity=self.similarity,
             k_cluster=self.k_cluster,
             num_TFs=self.n_tfs,
             num_target_genes=self.n_targets,
+            numIter=self.numIter,
             _NF=self._NF,
-            cross_val=self.cross_val,
-            max_rcd_iter=self.max_rcd_iter,
-            df_with_label=self.df_with_label,
             lambda1=self.lambda1,
             lambda2=self.lambda2,
+            cross_val=self.cross_val,
+            num_rep=self.num_rep,
+            max_rcd_iter=self.max_rcd_iter,
+            df_with_label=self.df_with_label,
             list_of_l1=self.list_of_l1,
             list_of_l2=self.list_of_l2
         )
@@ -417,10 +477,13 @@ class SimiCPipeline:
         self.timing[f'auc_{file_type}'] = te - ts
         print(f"\n✓ AUC calculation completed in {self._format_time(te - ts)}")
 
-    def run_pipeline(self, skip_filtering=False, calculate_raw_auc=False, 
-                    calculate_filtered_auc=True,
-                    variance_threshold=0.9,
-                    auc_params=None):
+# Wrapper function to run the complete pipeline
+    def run_pipeline(self,
+                     skip_filtering=False,
+                     calculate_raw_auc=False,
+                     calculate_filtered_auc=True,
+                     variance_threshold=0.9,
+                     auc_params=None):
         """
         Run the complete SimiC pipeline.
 
@@ -641,7 +704,7 @@ class SimiCPipeline:
             print(f"  Reduction: {((sparsity_filtered - sparsity_raw) / (100 - sparsity_raw) * 100):.2f}% more sparse")
             print()
 
-    def subset_label_specific_auc(self, result_type, label):
+    def subset_label_specific_auc(self, result_type: str, label: int):
         """
         Extract from auc results the label specific AUC dataframe.
         Args:
@@ -651,6 +714,7 @@ class SimiCPipeline:
             pd.DataFrame: AUC dataframe for the specified label
         """    
         auc_dic = self.load_results(result_type)
+        
         auc_df = auc_dic[label]
         # Load cell assignments to get which cells belong to which label
         assignment_df = pd.read_csv(self.p2assignment, sep='\t', header=None, names=['label'])

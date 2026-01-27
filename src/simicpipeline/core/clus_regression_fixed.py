@@ -8,32 +8,26 @@
 
 """
 This is an implementation of simicLASSO
-MODIFIED by IRENE to incorporate in new Dockerfile
+MODIFIED by IRENE MARIN to incorporate in new Dockerfile
 """
-
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 import pickle
 import time
 import os
-import argparse
-import ipdb
 import random
 import copy
 import itertools
 import math
 import sys
-from sklearn.linear_model import LassoLars, MultiTaskLasso
+from typing import Optional, List
 from sklearn.preprocessing import normalize
-from sklearn.manifold import TSNE
-from sklearn.cluster import KMeans, SpectralClustering
-from sklearn.decomposition import NMF
-from sklearn.metrics import accuracy_score, adjusted_mutual_info_score
-from simiclasso.common_io import load_dataFrame, extract_df_columns, split_df_and_assignment
-from simiclasso.evaluation_metric import get_r_squared
-from simiclasso.sc_different_clustering import kmeans_clustering, nmf_clustering, spectral_clustering, evaluation_clustering
-from simiclasso.gene_id_to_name import load_dict, save_dict
+from sklearn.model_selection import train_test_split
+
+from simicpipeline.utils.io import extract_df_columns, split_df_and_assignment
+from simicpipeline.core.evaluation_metric import get_r_squared
+from simicpipeline.core.sc_different_clustering import kmeans_clustering, evaluation_clustering
+from simicpipeline.core.gene_id_to_name import load_dict, save_dict
 from scipy.linalg import eigh, eigvalsh
 
 def extract_cluster_from_assignment(df_in, assignment, k_cluster):
@@ -171,11 +165,12 @@ def get_L_max(mat_dict, similarity, lambda1, lambda2):
         X_i = mat_dict[label]['tf_mat']
 
         m, n_x = X_i.shape
-        #### eigvals = (lo, hi) indexes of smallest and largest (in ascending order)
+        #### eigvals = (lo, hi) indexes of smallest and largest (in ascending order) since v1.5.0 scypy argument changed name `subset_by_inde``
         #### eigenvalues and corresponding eigenvectors to be returned.
-        #### 0 <= lo < hi <= M -1
+        #### 0 <= lo < hi <= M -1 
         #### basically, eigh and eigvalsh doesn't make much of a difference
-        L_tmp = 2/m * eigh(X_i.T @ X_i, eigvals = (n_x - 1, n_x - 1), eigvals_only = True)
+        L_tmp = 2/m * eigh(X_i.T @ X_i, subset_by_index = (n_x - 1, n_x - 1), eigvals_only = True)
+        # L_tmp = 2/m * eigh(X_i.T @ X_i, eigvals = (n_x - 1, n_x - 1), eigvals_only = True)
         # L_tmp = 2/m * eigvalsh(X_i.T @ X_i, eigvals = (n_x - 1, n_x - 1), turbo = True)
         if similarity:
             L_tmp += 4 * lambda2
@@ -291,7 +286,7 @@ def find_top_k_TFs(top_k, query_gene_list, coef, tf_list, name_id_mapping):
     coef: W.T in the regression model, coefficients of TFs with corresponding query_gene
     '''
     # top_k = 3
-    # ipdb.set_trace()
+    
     for co_tmp, tgene in zip(coef, query_gene_list):
         idx = np.argpartition(abs(co_tmp), -top_k)
         # print(idx)
@@ -316,7 +311,7 @@ def get_top_k_non_zero_targets(top_k, df, target_list):
     input: path to df file, top k choices, target list
     output: top k target genes in df
     '''
-    # ipdb.set_trace()
+    
     df_target = extract_df_columns(df, target_list)
     new_target_list = df_target.columns.values.tolist()
     sum_list = df_target.var().values
@@ -408,49 +403,78 @@ def get_train_mat_in_k_fold(mat_dict, idx, k):
                 }
     return mat_dict_train, mat_dict_eval
 
-def simicLASSO_op(p2df, p2assignment, similarity, p2tf, p2saved_file, 
-        k_cluster = None, num_TFs = -1, num_target_genes = -1, 
-        numIter = 1000, _NF = 1, lambda1 = 1e-2, lambda2 = 1e-5,
-        cross_val = False, num_rep = 1, max_rcd_iter = 500000, 
-        df_with_label = True, list_of_l1 = [1e-2], list_of_l2 = [1e-5] ):
+def simicLASSO_op(*,  # Force all arguments to be keyword-only
+        p2df: str,
+        p2tf: str,
+        p2assignment: Optional[str] = None,
+        p2saved_file: str,
+        similarity: bool = True,
+        k_cluster: Optional[int] = None,
+        num_TFs: int = -1,
+        num_target_genes: int = -1,
+        numIter: int = 1000,
+        _NF: float = 1.0,
+        lambda1: float = 1e-2,
+        lambda2: float = 1e-5,
+        cross_val: bool = False,
+        num_rep: int = 1,
+        max_rcd_iter: int = 500000,
+        df_with_label: bool = True,
+        list_of_l1: Optional[List[float]] = None,
+        list_of_l2: Optional[List[float]] = None 
+) -> None:
     '''
     perform the GRN inference algorithm, simicLASSO.
-    args:
-        p2df: path to dataframe
-            dataframe should be:
+    Args:
+        p2df (str): path to dataframe
+            dataframe should be like (with optional label column if p2assignment is not provided):
                     gene1, gene2, ..., genek, label
             cell1:  x,     x,   , ..., x,   , type1
             cell2:  x,     x,   , ..., x,   , type2
-
-        p2assignment: path to clustering order assignment file.
+        p2tf (str): path to TF list file / path to list of all TFs.
+        p2assignment (str): path to clustering order assignment file.
                       a text file with each line corresponding to cell order.
-        k_cluster: number of cluster in dataset. # ONLY IF ASSIGMENT IS NOT PROVIDED, WILL DO Kmeans and assign labels
-        similarity: 1 - Yes, 0 - No.
-        p2tf: path to list of all TFs.
-        num_TFs: number of TFs used in regression.
-        num_target_genes: number of target genes used in regression
-        num_rep: number of repeated test.
-    output: 
+        p2saved_file (str): path to save the output weight dictionary.
+        similarity (bool): Enables similarity constraint for Lipswitz constant (RCD process).
+        k_cluster (int): Number of clusters for K means; only if phenotype assignment is not provided will take labels based on Kmeans inferred clusters.
+        num_TFs (int): number of TFs used in regression.
+        num_target_genes(int): number of target genes used in regression-
+        numIter (int): Maximum number of iterations of the k-means algorithm for a single run.
+        _NF (float): Normalization factor for expression data (default 1.0, we expect data to be preprocessed).
+        lambda1 (float): L1 regularization parameter (sparsity).
+        lambda2 (float): L2 regularization parameter (network similarity).
+        cross_val (bool): Whether to perform cross-validation to select optimal lambdas
+        num_rep (int): Number of repetitions for test evaluation.
+        max_rcd_iter (int): Maximum RCD iterations.
+        df_with_label (bool): Whether the dataframe contains a label column with assignment labels.
+        list_of_l1 (list): List of L1 values for cross-validation.
+        list_of_l2 (list): List of L2 values for cross-validation.
+    Returns: 
         save the weight dictionary and gene list to p2saved_file.
     '''
-
-    if p2df == None:
-        raise ValueError('please enter the path to dataframe file saved from load_data.py')
-    elif os.path.isfile(p2df):
-        p2df_file = p2df
-    else:
-        raise ValueError('{} is not a valid file'.format(p2df))
+    # Set default values for mutable arguments at runtime
+    if list_of_l1 is None:
+        list_of_l1 = [1e-2]
+    if list_of_l2 is None:
+        list_of_l2 = [1e-5]
+    # if p2df == None:
+    #     raise ValueError('please enter the path to dataframe file saved from load_data.py')
+    # elif os.path.isfile(p2df):
+    #     p2df_file = p2df
+    # else:
+    #     raise ValueError('{} is not a valid file'.format(p2df))
 
     original_df = pd.read_pickle(p2df)
     if df_with_label:
-        original_feat_cols = list(original_df.columns[:-1])
+        label_idx = list(original_df.columns).index('label')
+        feat_cols = list(original_df.columns)
+        feat_cols.pop(label_idx)
+        df = original_df.loc[:,feat_cols]
     else:
-        original_feat_cols = list(original_df.columns)
-
-    X_raw, Y, feat_cols = load_dataFrame(p2df_file, original_feat_cols, df_with_label)
-    X = normalize(X_raw) * _NF
+        feat_cols = list(original_df.columns)
+        df = original_df
+            
     len_of_gene = len(feat_cols)
-    # X = X_raw
 
     n_dim, m_dim = X.shape
 
@@ -458,21 +482,20 @@ def simicLASSO_op(p2df, p2assignment, similarity, p2tf, p2saved_file,
     # get centroids and assignment from clustering
     #
     if p2assignment != None:
-        p2assign_file = p2assignment
-        if os.path.isfile(p2assign_file):
-            assignment = []
-            with open(p2assign_file, 'r') as f:
-                for line in f:
-                    label = line.split()[0]
-                    assignment.append(int(label))
-            assignment = np.array(assignment)
+        assignment_df = pd.read_csv(p2assignment, header = None)
+        assignment = assignment_df[0].values
     else:
         sys.stdout.flush()
-        print('invalid assignment file, use clustering assignment.')
+        print('Assignment file not provided, using clustering assignment instead.')
         if k_cluster is None:
-            raise ValueError('assignment file is not provided, and number of cluster is not given. quit funciton now.')
+            raise ValueError('Assignment file is not provided, and number of cluster is not given!')
+        # Prepare data for clustering
+        X_raw = df.values # get np.array
+        X = normalize(X_raw) * _NF # L2 normalize the data row-wise
         D_final, assignment = clustering_method(X, k_cluster, numIter)
         if df_with_label:
+            # There is a label column in the dataframe but we are using clustering assignment)
+            Y = original_df['label'].values
             acc, AMI = evaluation_clustering(assignment, Y)
             sys.stdout.flush()
             print('clustering accuracy = {:.4f}'.format(acc))
@@ -480,25 +503,19 @@ def simicLASSO_op(p2df, p2assignment, similarity, p2tf, p2saved_file,
             print('D_final = ', D_final)
             print('shape of D mat:', D_final.shape)
         else:
-            print('no label provided in dataframe, accuracy not available')
+            print('No label provided in dataframe, accuracy not available')
 
 
     #### BEGIN of the regression part
     sys.stdout.flush()
     print('------ Begin the regression part...')
-    df = pd.read_pickle(p2df_file)
-    # the following should be moved to load_dataset.py
-    # if expr_name == 'mouse' or expr_name == 'human_mgh':
-    #     df = df.reset_index(drop=True)
-
-    # if expr_name == 'human_mgh':
-    #     df = df.rename(columns = dict((k, k.replace("'", '')) for k in df.columns))
-    print('df in regression shape = ', df.shape)
-
-
+    print('Expression matrix for regression shape = ', df.shape)
     df = df.reset_index(drop=True)
-    # df[feat_cols] = X
     df_train, df_test, assign_train, assign_test = split_df_and_assignment(df, assignment)
+    ## ALTERNATIVE CLEAN CODE
+    X_train, X_test, y_train, y_test = train_test_split(df,assignment, test_size = 0.2, random_state = 1)
+    # note that here index are kept (cell ids)
+    
     sys.stdout.flush()
     print('df test = ', df_test.shape)
     print('test data assignment set:', set(list(assign_test)))
@@ -581,7 +598,7 @@ def simicLASSO_op(p2df, p2assignment, similarity, p2tf, p2saved_file,
 
 
     #### optimize using RCD
-    # ipdb.set_trace()
+    
     train_error, test_error = [], []
     r2_final_train, r2_final_test = [], []
     r2_final_0 = 0
@@ -595,7 +612,7 @@ def simicLASSO_op(p2df, p2assignment, similarity, p2tf, p2saved_file,
         train_error.append(loss_function_value(mat_dict_train, trained_weight_dict, similarity,
                 lambda1 = 0, lambda2 = 0))
         std_error_dict_test = std_error_per_cluster(mat_dict_test, trained_weight_dict)
-        # ipdb.set_trace()
+        
         r2_final_train.append(average_r2_score(mat_dict_train, trained_weight_dict)[0])
         r2_aver_test, r2_dict_test = average_r2_score(mat_dict_test, trained_weight_dict)
         r2_final_test.append(r2_aver_test)
@@ -616,7 +633,7 @@ def simicLASSO_op(p2df, p2assignment, similarity, p2tf, p2saved_file,
     print('R squared of test set(after): {:.4f}+/-{:.4f}'.format(np.mean(r2_final_test),
                                                                  np.std(r2_final_test)))
 
-    # # ipdb.set_trace()
+    # 
     # # variable_list[1] *= 1.1
     # root_path = '../../data/'
     # path_to_gene_name_dict = os.path.join(root_path, 'merged_gene_id_to_name_pickle')
