@@ -322,7 +322,7 @@ class ExperimentSetup(SimiCPreprocess):
                  tf_path: Union[str, Path],
                  project_dir: Union[str, Path]):
         """
-        Initialize ExperimentSetup.
+        Initialize ExperimentSetup. Loads TF lists and creates directory structure.
 
         Args:
             input_data: AnnData (cells x genes) or pandas DataFrame (cells x genes)
@@ -337,7 +337,7 @@ class ExperimentSetup(SimiCPreprocess):
         # Create standard SimiC directory structure
         self._create_directory_structure()
 
-        # Normalize input into NumPy matrix with cell/gene names
+        # Convert input into NumPy matrix with cell/gene names
         if isinstance(input_data, ad.AnnData):
             X = input_data.X
             # Convert sparse to dense if needed
@@ -458,15 +458,15 @@ class ExperimentSetup(SimiCPreprocess):
         matrix_filename = Path(matrix_filename)
         if matrix_filename.suffix != '.pickle':
             matrix_filename = matrix_filename.with_suffix('.pickle')
-            print(f"Warning: Matrix filename must have a .pickle suffix. Changing to {matrix_filename}")
+            print(f"\nWarning: Matrix filename must have a .pickle suffix. Changing to {matrix_filename}")
         matrix_path = self.input_files_dir / matrix_filename
         if matrix_path.exists():
-            print(f"Warning: Output file {matrix_path} already exists and will be overwritten.")
+            print(f"\nWarning: Output file {matrix_path} already exists and will be overwritten.")
         
         tf_filename = Path(tf_filename)
         if tf_filename.suffix != '.pickle':
             tf_filename = tf_filename.with_suffix('.pickle')
-            print(f"Warning: TF filename must have a .pickle suffix. Changing to {tf_filename}")
+            print(f"\nWarning: TF filename must have a .pickle suffix. Changing to {tf_filename}")
         tf_path = self.input_files_dir / tf_filename
         
         # Generate df from run_data
@@ -496,14 +496,15 @@ class ExperimentSetup(SimiCPreprocess):
         if len(data_tfs) == 0:
             raise ValueError("No TFs found in expression matrix from the provided TF list.")
         if tf_path.exists():
-            print(f"Warning: Output file {tf_path} already exists and will be overwritten.")
+            print(f"\nWarning: Output file {tf_path} already exists and will be overwritten.")
         with open(tf_path, 'wb') as f:
             pickle.dump(data_tfs, f)
             print(f"Saved {len(data_tfs)} TFs to {tf_path}")
         
         if annotation and isinstance(run_data, ad.AnnData):
             if annotation in run_data.obs.columns:
-                print(f"Annotation '{annotation}' found in obs columns.")
+                print("\n-------\n")
+                print(f"Annotation '{annotation}' found in obs columns!")
                 # Check annotation column is numeric
                 annot_series = run_data.obs[annotation]
                 if not pd.api.types.is_numeric_dtype(annot_series):
@@ -512,22 +513,24 @@ class ExperimentSetup(SimiCPreprocess):
                 try:
                     import collections
                     counter = collections.Counter(annot_series)
-                    print(f"Annotation distribution: {dict(counter)}")
+                    print(f"\nAnnotation distribution: {dict(counter)}")
                 except:
-                    print(f"Annotation values: {set(annot_series)}")
+                    print(f"\nAnnotation values: {set(annot_series)}")
                 # Save annotation
                 annot_path = self.input_files_dir / f"{annotation}_annotation.txt"
                 if annot_path.exists():
-                    print(f"Warning: Output file {annot_path} already exists and will be overwritten.")
+                    print(f"\nWarning: Output file {annot_path} already exists and will be overwritten.")
                 annot_series.to_csv(annot_path, index=False, header=False)
                 print(f"Saved annotation to {annot_path}")
             else:
-                print(f"Warning: Annotation '{annotation}' not found in obs columns.")
-                print(f"Available columns: {list(run_data.obs.columns)}")
+                print(f"\nWarning: Annotation '{annotation}' not found in obs columns.")
+                print(f"\nAvailable columns:\n {list(run_data.obs.columns)}")
                 print(f"Please manually provide an appropriate annotation file to SimiCPipeline in {self.input_files_dir}")
         elif annotation:
             print(f"Warning: Cannot save annotation. run_data must be AnnData object.")
             print(f"Please manually provide an appropriate annotation file to SimiCPipeline in {self.input_files_dir}")
         
+        print("\n-------\n")
         print("Experiment files saved successfully.")
+        print("\n-------\n")
 
