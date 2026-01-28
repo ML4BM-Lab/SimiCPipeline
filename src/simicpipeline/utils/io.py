@@ -248,13 +248,10 @@ def split_df_and_assignment(df_in, assignment, test_proportion = 0.2):
     random_perm = np.random.RandomState(seed=1).permutation(num_of_cells)
     test_idx = random_perm[:size_of_test_set]
     train_idx = random_perm[size_of_test_set:]
-
     train_df = df_in.loc[train_idx]
     train_assign = assignment[train_idx]
-
     test_df = df_in.loc[test_idx]
     test_assign = assignment[test_idx]
-    
     return train_df, test_df, train_assign, test_assign
     
 

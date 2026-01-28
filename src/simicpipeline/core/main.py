@@ -5,13 +5,11 @@ SimiC Pipeline Class
 Orchestrates the complete SimiC workflow including regression and AUC calculation.
 """
 
-import os
 import sys
 import time
 import pickle
 import numpy as np
 import pandas as pd
-import subprocess as sp
 from pathlib import Path
 from typing import Optional, Union
 from importlib.resources import files
@@ -53,12 +51,13 @@ class SimiCPipeline:
         self.n_targets = 1000 # Number of target genes
         self.lambda1 = 1e-2 # L1 regularization parameter (sparsity)
         self.lambda2 = 1e-5 # L2 regularization parameter (network similarity)e        
-        self.k_cluster = None # Number of clusters of K means; only if phenotype assignment is not provided will assign labels based on them.b        
+        self.num_rep = 1 # Number of repetitions for test evaluation
         self.similarity = True # Enables similarity constraint for Lipswitz constant (RCD process)         
         self.max_rcd_iter = 500000 # Maximum number of RCD iterations         
-        self.df_with_label = False # Whether the input dataframe has labels in the last column or not. If not assignment file must be provided.         
+        self.df_with_label = False # Whether the input dataframe has labels in the last column or not.         
         self.cross_val = False # Whether to perform cross-validation to select optimal lambdasf        
-        self._NF = 1 # Normalization factor for expression data (default 1.0, we expect data to be preprocessed).
+        self.k_cross_val = 5 # Number of folds for cross-validation
+        self.max_rcd_iter_cv = 10000 # Maximum number of RCD iterations in the cross-validation step
         self.list_of_l1 = [1e-1, 1e-2,1e-3, 10] # List of L1 values for cross-validation
         self.list_of_l2 = [1e-1, 1e-2,1e-3, 10] # List of L2 values for cross-validationity constraint for Lipswitz constant (RCD process)
         # Timing
@@ -79,7 +78,7 @@ class SimiCPipeline:
                             cell1:  x,     x,   , ..., x,   , type1
                             cell2:  x,     x,   , ..., x,   , type2
             p2assignment (str): Custom path to phenotype assignment file. Must be a plain text file 1 col with numbers (no header). 0 for baseline/control phenotype group. Should match cell order as in expression matrix.
-            p2tf (str): Custom path to TF list file. Must be a pickle file with a list of TF names.
+            p2tf (str): Custom path to TF list file. Must be a pickle file with a list of TF names or a pdDataframe with 1 col with gene symbol names (matching expression matrix colnames) and no header.
         """
         # Input paths - use custom paths if provided, otherwise raise error
         if not Path(p2df).exists():
@@ -174,8 +173,11 @@ class SimiCPipeline:
 
     def validate_inputs(self):
         """Validate that all required input files exist."""
+        if self.p2assignment is None & self.df_with_label is False:
+            raise ValueError("Either a phenotype assignment file (p2assignment) must be provided or the expression dataframe must contain labels in the last column (set df_with_label=True).")
+        
         required_files = [self.p2df, self.p2assignment, self.p2tf]
-        if self.p2assignment is None:
+        if self.p2assignment is None & self.df_with_label is True:
             required_files = [self.p2df, self.p2tf]
         missing_files = [f for f in required_files if not f.exists()]
         
@@ -189,11 +191,11 @@ class SimiCPipeline:
                        n_targets: Optional[int] = None,
                        lambda1: Optional[float] = None,
                        lambda2: Optional[float] = None,
-                       k_cluster: Optional[int] = None,
-                       numIter: Optional[int] = None,
                        similarity: Optional[bool] = None,
                        max_rcd_iter: Optional[int] = None,
                        cross_val: Optional[bool] = None,
+                       k_cross_val: Optional[int] = None,
+                       max_rcd_iter_cv: Optional[int] = None,
                        num_rep: Optional[int] = None,
                        list_of_l1: Optional[list] = None,
                        list_of_l2: Optional[list] = None,
@@ -207,11 +209,11 @@ class SimiCPipeline:
             n_targets (int): Number of target genes
             lambda1 (float): L1 regularization parameter (sparsity)
             lambda2 (float): L2 regularization parameter (network similarity)
-            k_cluster (int): Number of clusters of K means; only if phenotype assignment is not provided will assign labels based on them.
-            numIter (int): Maximum number of iterations of the k-means algorithm for a single run.
             similarity (bool): Enables similarity constraint for Lipswitz constant (RCD process)
             max_rcd_iter (int): Maximum RCD iterations
             cross_val (bool): Whether to perform cross-validation to select optimal lambdas
+            k_cross_val (int): Number of folds for cross-validation
+            max_rcd_iter_cv (int): Maximum number of RCD iterations in the cross-validation step
             num_rep (int): Number of repetitions for test evaluation
             list_of_l1 (list): List of L1 values for cross-validation
             list_of_l2 (list): List of L2 values for cross-validation
@@ -227,18 +229,20 @@ class SimiCPipeline:
             self.lambda1 = lambda1
         if lambda2 is not None:
             self.lambda2 = lambda2
-        if k_cluster is not None:
-            self.k_cluster = k_cluster
-        if numIter is not None:
-            self.numIter = numIter
         if similarity is not None:
             self.similarity = similarity
         if max_rcd_iter is not None:
             self.max_rcd_iter = max_rcd_iter
         if cross_val is not None:
             self.cross_val = cross_val
+        if list_of_l1 is not None:
             self.list_of_l1 = list_of_l1
+        if list_of_l2 is not None:
             self.list_of_l2 = list_of_l2
+        if k_cross_val is not None:
+            self.k_cross_val = k_cross_val
+        if max_rcd_iter_cv is not None:
+            self.max_rcd_iter_cv = max_rcd_iter_cv
         if num_rep is not None:
             self.num_rep = num_rep
         if _NF is not None:
@@ -279,17 +283,14 @@ class SimiCPipeline:
             p2assignment=str(self.p2assignment) if self.p2assignment is not None else None,
             p2saved_file=str(self.p2simic_matrices),
             similarity=self.similarity,
-            k_cluster=self.k_cluster,
-            num_TFs=self.n_tfs,
-            num_target_genes=self.n_targets,
-            numIter=self.numIter,
-            _NF=self._NF,
             lambda1=self.lambda1,
             lambda2=self.lambda2,
-            cross_val=self.cross_val,
-            num_rep=self.num_rep,
             max_rcd_iter=self.max_rcd_iter,
-            df_with_label=self.df_with_label,
+            cross_val=self.cross_val,
+            k_cv=self.k_cross_val,
+            max_rcd_iter_cv=self.max_rcd_iter_cv,
+            num_rep=self.num_rep,
+            df_with_label=self.df_with_label, 
             list_of_l1=self.list_of_l1,
             list_of_l2=self.list_of_l2
         )
@@ -456,6 +457,7 @@ class SimiCPipeline:
         output_file = self.p2auc_filtered if use_filtered else self.p2auc_raw
         
         file_type = "filtered" if use_filtered else "raw"
+        sys.stdout.flush()
         print("\n" + "="*50)
         print(f"Calculating AUC matrices ({file_type} weights)")
         print("="*50 + "\n")
@@ -532,6 +534,7 @@ class SimiCPipeline:
         self.timing['total'] = total_end - total_start
         
         # Print summary
+        sys.stdout.flush()
         self._print_summary()
 
     def _print_summary(self):
