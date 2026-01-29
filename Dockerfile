@@ -13,9 +13,9 @@ LABEL about.maintainer="imarin.4@alumni.unav.es"
 ################## BASE INSTALLATION ######################
 # Update/Install build dependencies
 RUN apt-get update
-RUN apt-get install -y --no-install-recommends curl git  && \
+RUN apt-get install -y --no-install-recommends curl git vim && \
 rm -rf /var/lib/apt/lists/*
-
+RUN echo "alias ll='ls -la'" >> ~/.bashrc
 # ################# POETRY ######################
 FROM base AS poetry
 RUN curl -sSL https://install.python-poetry.org | python3
