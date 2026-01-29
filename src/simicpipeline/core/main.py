@@ -656,6 +656,39 @@ class SimiCPipeline:
             target_ws_df = pd.Series(data=list(target_ws), index=list(target_names))
             tf_weights_filtered[label] = target_ws_df
         return tf_weights_filtered
+    
+    def get_TF_auc(self, TF_name: str, stacked: bool = False):
+        """
+        Retrieve the TF-target AUC matrix.
+        Args:
+            TF_name (str, list): List with name(s) of the transcription factor(s).
+            stacked (bool): If True, returns a DataFrame with targets as rows and labels as columns.
+        Output:
+            pd.DataFrame or dict: If stacked is True, returns a DataFrame with targets as rows and labels as columns.
+                                  If stacked is False, returns a dictionary with labels as keys and pd.DataFrame of target AUCs as values.
+                                  """
+        auc_results = self.load_results('auc_filtered')
+        if isinstance(TF_name, str):
+            TF_name = [TF_name]
+        missing = [tf for tf in TF_name if tf not in auc_results[0].columns]
+        if missing:
+            raise ValueError(f"TF(s) not found in AUC results: {missing}")
+        print(f"Retrieving AUC for TF: {TF_name}")
+        # Analyze each label
+        tf_aucs_filtered = {}
+        for label in auc_results.keys():
+            # Subset AUC dataframe to only cells in this label
+            auc_subset = self.subset_label_specific_auc('auc_filtered',label)
+            tf_aucs_filtered[label] = auc_subset.loc[:, TF_name]            
+        if stacked:
+            # concatenate all labels into a single DataFrame of one column and add label column
+            aucs_df = pd.DataFrame()
+            for label in tf_aucs_filtered.keys():
+                label_df = pd.DataFrame(tf_aucs_filtered[label])
+                label_df['label'] = label
+                aucs_df = pd.concat([aucs_df, label_df], axis=0)
+            return aucs_df
+        return tf_aucs_filtered
 
 
     def analyze_weights(self):

@@ -8,53 +8,59 @@ Provides visualization methods for SimiC pipeline results.
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-# import seaborn as sns
 from pathlib import Path
 from typing import Optional, List, Union, Dict
 import warnings
 
-# Safe import for the pipeline base. Provide a minimal fallback when missing.
+# Required optional dependencies
 try:
-    from simicpipeline.core.main import SimiCPipeline as _BasePipeline  # type: ignore
-except (ImportError, ModuleNotFoundError):
-    class _BasePipeline(object):
-        """
-        Minimal stub to allow importing and testing SimiCVisualization without full runtime deps.
-        Only provides attributes/methods required during visualization object construction.
-        """
-        def __init__(self, *args, **kwargs):
-            workdir = kwargs.get("workdir", ".")
-            self.output_path = Path(workdir)
-            self.run_name = kwargs.get("run_name", "run")
+    import anndata as ad
+except ImportError:
+    raise ImportError("Anndata is required. Please install: pip install anndata")
 
-        # Stubs that raise if visualization methods needing pipeline data are used without SimiCPipeline
-        def load_results(self, *args, **kwargs):
-            raise ImportError("SimiCPipeline is not available. Install full runtime deps to use this method.")
+try:
+    import scanpy as sc
+except ImportError:
+    raise ImportError("Scanpy is required. Please install: pip install scanpy")
 
-        def calculate_dissimilarity(self, *args, **kwargs):
-            raise ImportError("SimiCPipeline is not available. Install full runtime deps to use this method.")
-
-        def subset_label_specific_auc(self, *args, **kwargs):
-            raise ImportError("SimiCPipeline is not available. Install full runtime deps to use this method.")
+# Import base pipeline (will raise if not installed)
+from simicpipeline.core.main import SimiCPipeline
 
 warnings.filterwarnings('ignore')
 
-class SimiCVisualization(_BasePipeline):
+class SimiCVisualization(SimiCPipeline):
     """
     Visualization class for SimiC results.
+    
     Inherits from SimiCPipeline to access all pipeline functionality plus visualization methods.
+    Requires SimiCPipeline to be fully installed and configured.
     """
     
-    def __init__(self, *args, **kwargs):
-        """Initialize visualization pipeline."""
-        super().__init__(*args, **kwargs)
+    def __init__(self, 
+                 project_dir: str,
+                 run_name: Optional[str] = None,
+                 adata: Optional[ad.AnnData] = None,
+                 **kwargs):
+        """
+        Initialize visualization pipeline.
+        
+        Args:
+            project_dir (str): Working directory path where input files are located
+            run_name (str): Unique identifier for this analysis run
+            adata (ad.AnnData): Optional AnnData object containing cell metadata
+            **kwargs: Additional keyword arguments passed to SimiCPipeline
+        """
+        # Initialize parent SimiCPipeline
+        super().__init__(project_dir=project_dir, run_name=run_name)
+        
+        # Store AnnData object if provided
+        self.adata = adata
         
         # Create figures directory
-        self.figures_path = self.output_path / "figures"/ self.run_name
+        self.figures_path = self.output_path / "figures" / self.run_name
         self.figures_path.mkdir(parents=True, exist_ok=True)
-
-        # Set default plot style
-        # sns.set_style("whitegrid")
+        
+        # Default plot settings
         self.default_figsize = (12, 6)
         
         # Label names mapping (numeric label -> custom name)
@@ -88,6 +94,17 @@ class SimiCVisualization(_BasePipeline):
         if label_int in self.label_names:
             return self.label_names[label_int]
         return f'Label {label}'
+        
+    def set_adata(self, adata: 'ad.AnnData'):
+        """
+        Set or update the AnnData object.
+        
+        Args:
+            adata: AnnData object containing cell metadata
+        """
+        self.adata = adata
+        print(f"AnnData object set with {adata.n_obs} cells and {adata.n_vars} genes")
+    
         
     def plot_r2_distribution(self, labels: Optional[List[Union[int, str]]] = None, 
                             threshold: float = 0.7,
@@ -597,7 +614,7 @@ class SimiCVisualization(_BasePipeline):
                 print(f"Error saving figure: {e}")
         
         return fig
-
+    
     def plot_dissimilarity_heatmap(self, labels: Optional[List[Union[int, str]]] = None,
                                    top_n_tfs: Optional[int] = None,
                                    save: bool = True,
@@ -664,7 +681,7 @@ class SimiCVisualization(_BasePipeline):
             print(f"✓ Saved to {self.figures_path / fname}")
         
         return fig
-
+    
     def plot_umap_with_activity(self, umap_df: pd.DataFrame,
                                 tf_names: Union[str, List[str]],
                                 labels: Optional[List[Union[int, str]]] = None,

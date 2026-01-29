@@ -7,9 +7,10 @@ This script calculates the AUC matrix using an object-oriented approach.
 import numpy as np
 import pandas as pd
 import time
+import sys
 from joblib import Parallel, delayed
 from pathlib import Path
-import sys
+from simicpipeline.utils.io import write_pickle
 
 
 class BaseProcessor:
@@ -61,13 +62,13 @@ class AUCProcessor(BaseProcessor):
         Load data and normalize the weight matrix with respect to target expression norms.
         Cut at the len of TFs (removed the bias term)
         """
-        self.res_dict = read_pickle(self.p2res)
+        self.res_dict = pd.read_pickle(self.p2res)
 
         weight_dic = self.res_dict['weight_dic']
         self.TF_ids = self.res_dict['TF_ids']
         self.target_ids = self.res_dict['query_targets']
 
-        self.original_df = read_pickle(self.p2df)
+        self.original_df = pd.read_pickle(self.p2df)
         target_df = self.original_df[self.target_ids]
         
         # Euclidean norm of target expresion
@@ -238,6 +239,7 @@ def run_AUCprocessor(p2df, p2res, p2saved_file, percent_of_target=1, sort_by='ex
     # Initialize the AUCProcessor
     processor = AUCProcessor(p2df, p2res)
     # Load and normalize weights
+    sys.stdout.flush()
     print("Loading and normalizing weights...")
     processor.normalized_by_target_norm()
     
