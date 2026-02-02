@@ -421,7 +421,7 @@ class SimiCPipeline(SimiCBase):
         
         ts = time.time()
         
-        processor = AUCProcessor(str(self.p2df), str(weight_file))
+        processor = AUCProcessor(self.project_dir, self.p2df, str(weight_file))
         processor.normalized_by_target_norm()
         processor.save_AUC_dict(
             str(output_file),
