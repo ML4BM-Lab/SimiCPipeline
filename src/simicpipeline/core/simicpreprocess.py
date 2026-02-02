@@ -10,32 +10,31 @@ import pandas as pd
 from pathlib import Path
 from typing import Optional, List, Union
 import pickle
-# Single-cell data manipulation
-# import scipy
-# import scprep
+
 try:
     import anndata as ad
 except ImportError:
     raise ImportError("Anndata is required. Please install.")
 
-class SimiCPreprocess:
-    """
-    Base preprocessing pipeline for SimiC analysis.
-    Provides common utilities for both MAGIC imputation and experiment setup.
-    """
+from simicpipeline.core import SimiCBase
 
-    def __init__(self, project_dir: Union[str, Path]):
-        """
-        Initialize base preprocessing pipeline.
+# class SimiCPreprocess(SimiCBase):
+#     """
+#     Base preprocessing pipeline for SimiC analysis.
+#     Provides common utilities for both MAGIC imputation and experiment setup.
+#     """
 
-        Args:
-            project_dir: Directory for project files
-        """
-        self.project_dir = Path(project_dir)
-        self.project_dir.mkdir(parents=True, exist_ok=True)
+#     def __init__(self, project_dir: Union[str, Path]):
+#         """
+#         Initialize base preprocessing pipeline.
+
+#         Args:
+#             project_dir: Directory for project files
+#         """
+#         super().__init__(project_dir = project_dir)
 
 
-class MagicPipeline(SimiCPreprocess):
+class MagicPipeline(SimiCBase):
     """
     MAGIC imputation pipeline.  
     Handles loading raw expression data, filtering, normalization, and MAGIC imputation.  
@@ -307,7 +306,7 @@ class MagicPipeline(SimiCPreprocess):
         return self._imputed
 
 
-class ExperimentSetup(SimiCPreprocess):
+class ExperimentSetup(SimiCBase):
     """
     Minimal experiment setup for SimiC analysis.
 
@@ -334,7 +333,7 @@ class ExperimentSetup(SimiCPreprocess):
         # Load TF list
         self.tf_list = self._load_tf_list(tf_path)
         
-        # Create standard SimiC directory structure
+        # Create standard SimiC directory structure (already done in parent __init__)
         self._create_directory_structure()
 
         # Convert input into NumPy matrix with cell/gene names
@@ -375,17 +374,13 @@ class ExperimentSetup(SimiCPreprocess):
 
     def _create_directory_structure(self) -> None:
         """Create standard SimiC directory structure."""
-        # Input files directory
-        self.input_files_dir = self.project_dir / 'inputFiles'
-        self.input_files_dir.mkdir(parents=True, exist_ok=True)
+        # Input files directory (already created in parent BasePipeline)
+        self.input_files_dir = self.input_path
         
-        # Output SimiC directories
-        self.output_simic_dir = self.project_dir / 'outputSimic'
-        self.figures_dir = self.output_simic_dir / 'figures'
-        self.matrices_dir = self.output_simic_dir / 'matrices'
-        
-        self.figures_dir.mkdir(parents=True, exist_ok=True)
-        self.matrices_dir.mkdir(parents=True, exist_ok=True)
+        # Output SimiC directories (already created in parent BasePipeline)
+        self.output_simic_dir = self.output_path
+        self.figures_dir = self.figures_path
+        self.matrices_dir = self.matrices_path
 
     def calculate_mad_genes(self,
                             n_tfs: int,
