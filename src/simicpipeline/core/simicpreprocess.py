@@ -24,7 +24,9 @@ from simicpipeline.core import SimiCBase
 #     Provides common utilities for both MAGIC imputation and experiment setup.
 #     """
 
-#     def __init__(self, project_dir: Union[str, Path]):
+#     def __init__(self, 
+#                  project_dir: Union[str, Path],
+#                  ):
 #         """
 #         Initialize base preprocessing pipeline.
 
@@ -32,6 +34,14 @@ from simicpipeline.core import SimiCBase
 #             project_dir: Directory for project files
 #         """
 #         super().__init__(project_dir = project_dir)
+    
+#     def _create_directory_structure(self) -> None:
+#         """Create standard SimiC directory structure."""
+       
+#         self.input_files_dir = self.input_path
+#         self.output_simic_dir = self.output_path
+#         self.figures_dir = self.figures_path
+#         self.matrices_dir = self.matrices_path
 
 
 class MagicPipeline(SimiCBase):
@@ -374,13 +384,17 @@ class ExperimentSetup(SimiCBase):
 
     def _create_directory_structure(self) -> None:
         """Create standard SimiC directory structure."""
-        # Input files directory (already created in parent BasePipeline)
-        self.input_files_dir = self.input_path
-        
-        # Output SimiC directories (already created in parent BasePipeline)
-        self.output_simic_dir = self.output_path
-        self.figures_dir = self.figures_path
-        self.matrices_dir = self.matrices_path
+        # Input files directory
+        self.input_files_dir = self.project_dir / 'inputFiles'
+        self.input_files_dir.mkdir(parents=True, exist_ok=True)
+
+        # Output SimiC directories
+        self.output_simic_dir = self.project_dir / 'outputSimic'
+        self.figures_dir = self.output_simic_dir / 'figures'
+        self.matrices_dir = self.output_simic_dir / 'matrices'
+
+        self.figures_dir.mkdir(parents=True, exist_ok=True)
+        self.matrices_dir.mkdir(parents=True, exist_ok=True)
 
     def calculate_mad_genes(self,
                             n_tfs: int,
