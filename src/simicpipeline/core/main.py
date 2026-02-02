@@ -101,7 +101,7 @@ class SimiCPipeline(SimiCBase):
         if p2assignment:
             self.p2assignment = Path(p2assignment)
         else:
-            print("WARNING: Path to phenotype assignment file (p2assignment) not provided. Clustering will be used if k_cluster is set.")
+            print("WARNING: Path to phenotype assignment file (p2assignment) not provided. df_with_label should be set to True and p2df should contain a 'label' column.")
             
         if not Path(p2tf).exists():
             print("WARNING: Path to TF list file (p2tf) not found. Using default mouse TF list.")
@@ -503,7 +503,6 @@ class SimiCPipeline(SimiCBase):
         print(f"  - Lambda2: {self.lambda2}")
         print(f"  - Number of TFs: {self.n_tfs}")
         print(f"  - Number of targets: {self.n_targets}")
-        print(f"  - Clusters: {self.k_cluster}")
         print(f"\nTiming:")
         for step, duration in self.timing.items():
             print(f"  - {step}: {self.format_time(duration)}")
