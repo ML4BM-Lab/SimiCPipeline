@@ -39,14 +39,14 @@ class SimiCBase:
     def format_time(self, seconds: float) -> str:
         return format_time(seconds)
   
-    def print_project_info(self) -> dict:
+    def print_project_info(self, max_depth:int = 3) -> dict:
         """
         Get information about the project structure.
         
         Returns:
             dict: Dictionary with project paths and status
         """
-        return print_tree(self.project_dir, prefix="", max_depth=3)
+        return print_tree(self.project_dir, prefix="", max_depth=max_depth)
 
     def set_paths_custom(self, 
                          force = False,

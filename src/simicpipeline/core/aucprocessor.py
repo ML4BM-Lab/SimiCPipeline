@@ -12,6 +12,7 @@ from joblib import Parallel, delayed
 from pathlib import Path
 from simicpipeline.utils.io import write_pickle
 from simicpipeline.core import SimiCBase
+from typing import Optional, Union
 
 class BaseProcessor(SimiCBase):
     """
@@ -47,8 +48,22 @@ class AUCProcessor(SimiCBase):
     """
 
 
-    def __init__(self, p2df, p2res):
-        super().__init__(p2df, p2res)
+    def __init__(self, 
+                 project_dir: str,
+                 p2df: Union[str,Path],
+                 p2res: Union[str,Path]) -> None:
+        """
+        Initialize the AUC pipeline.
+
+        Args:
+            project_dir (str): Working directory for input/output
+            run_name (str): Optional name for this run (used in output filenames)
+        """
+        super().__init__(project_dir=project_dir)
+        self.p2df = Path(p2df)
+        if self.p2df.exists() is False:
+            raise FileNotFoundError(f"Data file not found: {self.p2df}")
+        self.p2res = Path(p2res)
         self.normalized_weights = None
         self.original_df = None
         self.TF_ids = None
