@@ -24,11 +24,11 @@ except ImportError:
     raise ImportError("Scanpy is required. Please install: pip install scanpy")
 
 # Import base pipeline (will raise if not installed)
+from simicpipeline.core.base import SimiCBase
 from simicpipeline.core.main import SimiCPipeline
-
 warnings.filterwarnings('ignore')
 
-class SimiCVisualization(SimiCPipeline):
+class SimiCVisualization(SimiCBase):
     """
     Visualization class for SimiC results.
     
@@ -38,48 +38,134 @@ class SimiCVisualization(SimiCPipeline):
     
     def __init__(self, 
                  project_dir: str,
-                 run_name: Optional[str] = None,
-                 adata: Optional[ad.AnnData] = None,
-                 **kwargs):
+                 run_name: str,
+                 search: bool = True,
+                 lambda1: Optional[float] = None,
+                 lambda2: Optional[float] = None,
+                 label_names: Optional[Dict[Union[int, str], str]] = None,
+                 colors: Optional[Dict[Union[int, str], str]] = None,
+                 adata: Optional[Union[Path, str, ad.AnnData]] = None):
         """
         Initialize visualization pipeline.
         
         Args:
             project_dir (str): Working directory path where input files are located
             run_name (str): Unique identifier for this analysis run
-            adata (ad.AnnData): Optional AnnData object containing cell metadata
-            **kwargs: Additional keyword arguments passed to SimiCPipeline
+            search: Whether to automatically search for simic output files in project directory / run_name based on lambda1 and lambda2
+            lambda1: Lambda1 regularization parameter (optional)
+            lambda2: Lambda2 regularization parameter (optional)
+            label_names: Dictionary mapping labels to custom names (optional)
+            adata: AnnData object containing cell metadata (optional)
+        
+        Example:
+          
+            # Initialization in one step
+            viz = SimiCVisualization(
+                project_dir="./SimiCExampleRun/KPB25L/Tumor",
+                run_name="experiment_tumor",
+                p2assignment="./SimiCExampleRun/KPB25L/annotation.csv",
+                lambda1=1e-1,
+                lambda2=1e-2,
+                label_names={0: 'Control', 1: 'PD-L1', 2: 'DAC', 3: 'Combination'},
+                adata=adata_object
+            )
         """
         # Initialize parent SimiCPipeline
-        super().__init__(project_dir=project_dir, run_name=run_name)
+        super().__init__(project_dir = project_dir)
+        # Set paths
         
-        # Store AnnData object if provided
-        self.adata = adata
-        
+        self.output_path = self.project_dir / "outputSimic"
+        self.run_name = run_name
         # Create figures directory
         self.figures_path = self.output_path / "figures" / self.run_name
-        self.figures_path.mkdir(parents=True, exist_ok=True)
+        if self.figures_path.exists():
+            print("Warning: Figures path already exists. Existing figures may be overwritten.")
+        else:
+            print(f"Creating figures directory at: {self.figures_path}")
+            self.figures_path.mkdir(parents=True, exist_ok=True)
+
+        
+        self.lambda1 = lambda1
+        self.lambda2 = lambda2
+        base_name = f"{self.run_name}_L1_{self.lambda1}_L2_{self.lambda2}"
+        if search:
+            if self.lambda1 is None or self.lambda2 is None:
+                raise ValueError("Both lambda1 and lambda2 must be provided when search=True")
+            self.run_path = self.output_path / "matrices"  / self.run_name
+            self.p2simic_matrices = self.run_path / f"{base_name}_simic_matrices.pickle"
+            self.p2filtered_matrices = self.run_path / f"{base_name}_simic_matrices_filtered_BIC.pickle"
+            self.p2auc_raw = self.run_path / f"{base_name}_wAUC_matrices.pickle"
+            self.p2auc_filtered = self.run_path / f"{base_name}_wAUC_matrices_filtered_BIC.pickle"
+        else: 
+            self.p2simic_matrices = None
+            self.p2filtered_matrices = None
+            self.p2auc_raw = None
+            self.p2auc_filtered = None
+
+       # Store AnnData object if provided (for UMAP visualziations)
+        if adata is not None:
+            self.set_adata(adata)
         
         # Default plot settings
         self.default_figsize = (12, 6)
         
-        # Label names mapping (numeric label -> custom name)
-        self.label_names = {}
-    
-    def set_label_names(self, label_names: Dict[Union[int, str], str]):
+        # Label names mapping
+        if label_names is not None:
+            if colors is not None:
+                self.set_label_names(label_names, colors)
+            else:   
+                self.set_label_names(label_names)
+        else:   
+            self.label_names = {}
+            self.colors = {}
+
+    # def set_paths        
+
+    def set_adata(self, adata: Union[Path, str, ad.AnnData]):
         """
-        Set custom names for phenotype labels.
+        Set or update the AnnData object.
         
         Args:
+            adata: AnnData object containing cell metadata
+        """
+        if isinstance(adata, str) or isinstance(adata, Path):
+            from simicpipeline import load_from_anndata
+            adata = load_from_anndata(adata)
+
+        self.adata = adata
+        print(f"AnnData object set with {adata.n_obs} cells and {adata.n_vars} genes")
+        
+    def set_label_names(self, p2assignment: Union[Path, str],
+                        label_names: Dict[Union[int, str], str],
+                        colors: Optional[Dict[Union[int, str], str]] = None):
+        """
+        Set path and custom names and colors for phenotype labels.
+        
+        Args:
+            p2assignment: Path to cell label assignment file. Needed for label-specific visualizations.
             label_names: Dictionary mapping numeric labels to custom names
                         e.g., {0: 'Control', 1: 'Treatment1', 2: 'Treatment2'}
-        
+            colors: (Optional) Dictionary mapping numeric labels to colors
+                    e.g., {0: 'blue', 1: 'orange', 2: 'green'}
         Example:
-            viz.set_label_names({0: 'Control', 1: 'PD-L1', 2: 'DAC', 3: 'Combination'})
+            p2assignment = "./SimiCExampleRun/KPB25L/annotation.csv"
+            lab_dict = {0: 'Control', 1: 'PD-L1', 2: 'DAC', 3: 'Combination'}
+            col_dict = {0: 'blue', 1: 'orange', 2: 'green', 3: 'purple'}
+            viz.set_label_names(label_names=lab_dict, colors=col_dict)
         """
+        if not p2assignment:
+            raise ValueError("Path to assignment file (p2assignment) must be provided.")
+        self.p2assignment = Path(p2assignment)
+        if not self.p2assignment.exists():
+            raise FileNotFoundError(f"Assignment file not found: {self.p2assignment}")
         self.label_names = {int(k): str(v) for k, v in label_names.items()}
         print(f"Label names set: {self.label_names}")
-    
+        if colors is not None:
+            self.colors = {int(k): v for k, v in colors.items()}
+            print(f"Label colors set: {self.colors}")
+        # else: 
+        #     self.colors = None
+        
     def _get_label_name(self, label: Union[int, str]) -> str:
         """
         Get the display name for a label.
@@ -94,18 +180,9 @@ class SimiCVisualization(SimiCPipeline):
         if label_int in self.label_names:
             return self.label_names[label_int]
         return f'Label {label}'
-        
-    def set_adata(self, adata: 'ad.AnnData'):
-        """
-        Set or update the AnnData object.
-        
-        Args:
-            adata: AnnData object containing cell metadata
-        """
-        self.adata = adata
-        print(f"AnnData object set with {adata.n_obs} cells and {adata.n_vars} genes")
-    
-        
+
+    # Plotting functions
+
     def plot_r2_distribution(self, labels: Optional[List[Union[int, str]]] = None, 
                             threshold: float = 0.7,
                             save: bool = True,
@@ -263,7 +340,8 @@ class SimiCVisualization(SimiCPipeline):
             x_pos = np.arange(len(target_order))
             bar_width = 0.8 / len(labels)
             
-            colors = ["steelblue", "orange", "green", "purple", "brown",]
+            default_colors = ["steelblue", "orange", "green", "purple", "brown"]
+            
             for label_idx, label in enumerate(labels):
                 label_data = df_filtered[df_filtered['label'] == str(label)]
                 weights_ordered = [label_data[label_data['target'] == t]['weight'].values[0] 
@@ -272,9 +350,15 @@ class SimiCVisualization(SimiCPipeline):
                 
                 label_name = self._get_label_name(label)
                 
+                # Use custom color if available, otherwise use default
+                if int(label) in self.colors:
+                    bar_color = self.colors[int(label)]
+                else:
+                    bar_color = default_colors[label_idx % len(default_colors)]
+                
                 ax.bar(x_pos + label_idx * bar_width, weights_ordered, 
                       bar_width, label=label_name, 
-                      color=colors[label_idx], edgecolor='black', linewidth=0.5)
+                      color=bar_color, edgecolor='black', linewidth=0.5)
             
             ax.set_xlabel('Target Genes', fontsize=10)
             ax.set_ylabel('Weight', fontsize=10)
@@ -296,7 +380,7 @@ class SimiCVisualization(SimiCPipeline):
                 print(f"Error saving figure: {e}")
         
         return fig
-
+    
     def plot_target_weights(self, target_names: Union[str, List[str]],
                            labels: Optional[List[Union[int, str]]] = None,
                            save: bool = True,
@@ -397,7 +481,7 @@ class SimiCVisualization(SimiCPipeline):
             x_pos = np.arange(len(tf_order))
             bar_width = 0.8 / len(labels)
             
-            colors = ["steelblue", "orange", "green", "purple", "brown",]
+            default_colors = ["steelblue", "orange", "green", "purple", "brown"]
             
             for label_idx, label in enumerate(labels):
                 label_data = df[df['label'] == str(label)]
@@ -407,9 +491,15 @@ class SimiCVisualization(SimiCPipeline):
                 
                 label_name = self._get_label_name(label)
                 
+                # Use custom color if available, otherwise use default
+                if int(label) in self.colors:
+                    bar_color = self.colors[int(label)]
+                else:
+                    bar_color = default_colors[label_idx % len(default_colors)]
+                
                 ax.bar(x_pos + label_idx * bar_width, weights_ordered, 
                       bar_width, label=label_name, 
-                      color=colors[label_idx], edgecolor='black', linewidth=0.5)
+                      color=bar_color, edgecolor='black', linewidth=0.5)
             
             ax.set_xlabel('Transcription Factors', fontsize=10)
             ax.set_ylabel('Weight', fontsize=10)
@@ -429,6 +519,194 @@ class SimiCVisualization(SimiCPipeline):
                 print(f"✓ Saved to {self.figures_path / fname}")
             except Exception as e:
                 print(f"Error saving figure: {e}")
+        
+        return fig
+    
+    def plot_dissimilarity_heatmap(self, labels: Optional[List[Union[int, str]]] = None,
+                                   top_n_tfs: Optional[int] = None,
+                                   save: bool = True,
+                                   filename: Optional[str] = None):
+        """
+        Plot heatmap of regulatory dissimilarity scores.
+        
+        Args:
+            labels: Phenotype labels to compare
+            top_n_tfs: Number of top TFs to display (by dissimilarity)
+            save: Whether to save the figure
+            filename: Custom filename for saved figure
+        """
+        print("\n" + "="*70)
+        print(f"PLOTTING DISSIMILARITY HEATMAP")
+        print("="*70 + "\n")
+        
+        # Calculate dissimilarity scores
+        dissim_df = self.calculate_dissimilarity(select_labels=labels)
+        
+        if top_n_tfs:
+            dissim_df = dissim_df.head(top_n_tfs)
+        
+        # Create heatmap using matplotlib
+        fig, ax = plt.subplots(figsize=(8, max(6, len(dissim_df) * 0.3)))
+        
+        # Create the heatmap
+        im = ax.imshow(dissim_df.values, cmap='viridis', aspect='auto')
+        
+        # Set ticks and labels
+        ax.set_xticks(np.arange(len(dissim_df.columns)))
+        ax.set_yticks(np.arange(len(dissim_df.index)))
+        ax.set_xticklabels(dissim_df.columns, fontsize=10)
+        ax.set_yticklabels(dissim_df.index, fontsize=8)
+        
+        # Rotate the x-axis labels
+        plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+        
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label('Dissimilarity Score', rotation=270, labelpad=20, fontsize=10)
+        
+        # Annotate cells with values
+        for i in range(len(dissim_df.index)):
+            for j in range(len(dissim_df.columns)):
+                text = ax.text(j, i, f'{dissim_df.values[i, j]:.4f}',
+                             ha="center", va="center", color="white", fontsize=6)
+        
+        # Add title and labels
+        ax.set_title('Regulatory Dissimilarity Scores', fontsize=14, fontweight='bold', pad=20)
+        ax.set_ylabel('Transcription Factors', fontsize=12)
+        
+        # Add gridlines
+        ax.set_xticks(np.arange(len(dissim_df.columns)) - 0.5, minor=True)
+        ax.set_yticks(np.arange(len(dissim_df.index)) - 0.5, minor=True)
+        ax.grid(which="minor", color="white", linestyle='-', linewidth=0.5)
+        ax.tick_params(which="minor", size=0)
+        
+        plt.tight_layout()
+        
+        if save:
+            fname = filename or f"{self.run_name}_dissimilarity_heatmap.pdf"
+            plt.savefig(self.figures_path / fname, bbox_inches='tight', dpi=300)
+            print(f"✓ Saved to {self.figures_path / fname}")
+        
+        return fig
+
+    def plot_tf_network_heatmap(self, tf_name: str,
+                               top_n_targets: int = 10,
+                               labels: Optional[List[Union[int, str]]] = None,
+                               cmap: str = 'RdBu_r',
+                               vmin: Optional[float] = None,
+                               vmax: Optional[float] = None,
+                               save: bool = True,
+                               filename: Optional[str] = None):
+        """
+        Plot heatmap of TF regulatory network showing weights across phenotypes.
+        
+        Args:
+            tf_name: Transcription factor name
+            top_n_targets: Number of top targets to display (by max absolute weight)
+            labels: Phenotype labels to include (default: all)
+            cmap: Colormap to use (default: 'RdBu_r' - red/white/blue)
+                  Red gradient for positive weights, blue gradient for negative weights
+            vmin: Minimum value for colormap (default: auto-calculated from data, symmetric around 0)
+            vmax: Maximum value for colormap (default: auto-calculated from data, symmetric around 0)
+            save: Whether to save the figure
+            filename: Custom filename for saved figure
+        """
+        print("\n" + "="*70)
+        print(f"PLOTTING TF NETWORK HEATMAP")
+        print("="*70 + "\n")
+        
+        print(f"Processing {tf_name}...")
+        
+        # Get network for the TF
+        try:
+            network = self.get_TF_network(tf_name, stacked=True)
+        except Exception as e:
+            print(f"Error: Could not retrieve network for {tf_name}: {e}")
+            return None
+        
+        if network is None or network.empty:
+            print(f"Error: No network data found for {tf_name}")
+            return None
+        
+        # Filter to selected labels if provided
+        if labels is not None:
+            label_names = [self._get_label_name(l) for l in labels]
+            # Find columns that match the label names
+            matching_cols = [col for col in network.columns if any(ln in str(col) for ln in label_names)]
+            if matching_cols:
+                network = network[matching_cols]
+        
+        print(f"Total targets for {tf_name}: {len(network)}")
+        
+        # Calculate max absolute weight across all phenotypes
+        network['max_abs_weight'] = network.abs().max(axis=1)
+        top_targets = network.nlargest(top_n_targets, 'max_abs_weight')
+        
+        print(f"\nTop {top_n_targets} targets by absolute weight:")
+        print(top_targets.drop('max_abs_weight', axis=1).to_string())
+        
+        # Create heatmap
+        fig, ax = plt.subplots(figsize=(max(8, len(top_targets.columns) * 1.2), 
+                                        max(6, len(top_targets) * 0.4)))
+        
+        # Drop the max_abs_weight column for plotting
+        plot_data = top_targets.drop('max_abs_weight', axis=1)
+        
+        # Auto-calculate vmin and vmax from data if not provided
+        # Always make symmetric around 0 for RdBu scale
+        if vmin is None or vmax is None:
+            data_min = plot_data.values.min()
+            data_max = plot_data.values.max()
+            max_abs = max(abs(data_min), abs(data_max))
+            vmin = -max_abs
+            vmax = max_abs
+        
+        # Create the heatmap
+        im = ax.imshow(plot_data.values, cmap=cmap, aspect='auto', vmin=vmin, vmax=vmax)
+        
+        # Set labels
+        ax.set_xticks(np.arange(len(plot_data.columns)))
+        ax.set_yticks(np.arange(len(plot_data.index)))
+        ax.set_xticklabels(plot_data.columns, fontsize=10)
+        ax.set_yticklabels(plot_data.index, fontsize=9)
+        
+        # Rotate x-axis labels
+        plt.setp(ax.get_xticklabels(), rotation=45, ha='right', rotation_mode='anchor')
+        
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label('Regulatory Weight', rotation=270, labelpad=20, fontsize=10)
+        
+        # Add values to cells
+        for i in range(len(plot_data.index)):
+            for j in range(len(plot_data.columns)):
+                value = plot_data.values[i, j]
+                text_color = 'white' if abs(value) > (max_abs / 2) else 'black'
+                text = ax.text(j, i, f'{value:.2f}',
+                             ha='center', va='center',
+                             color=text_color, fontsize=8)
+        
+        # Add title
+        ax.set_title(f'Top {top_n_targets} Targets for {tf_name}\nacross phenotypes',
+                    fontsize=13, fontweight='bold', pad=15)
+        
+        # Add gridlines
+        ax.set_xticks(np.arange(len(plot_data.columns)) - 0.5, minor=True)
+        ax.set_yticks(np.arange(len(plot_data.index)) - 0.5, minor=True)
+        ax.grid(which="minor", color="gray", linestyle='-', linewidth=0.5, alpha=0.3)
+        ax.tick_params(which="minor", size=0)
+        
+        plt.tight_layout()
+        
+        if save:
+            fname = filename or f"{self.run_name}_network_{tf_name}_heatmap.pdf"
+            try:
+                plt.savefig(self.figures_path / fname, bbox_inches='tight', dpi=300)
+                print(f"\n✓ Saved to {self.figures_path / fname}")
+            except Exception as e:
+                print(f"Error saving figure: {e}")
+            finally:
+                plt.close(fig) 
         
         return fig
 
@@ -509,8 +787,7 @@ class SimiCVisualization(SimiCPipeline):
         fig, axes = plt.subplots(n_rows, n_cols, figsize=(14, 5*n_rows))
         axes = axes.flatten() if n_tfs > 1 else [axes]
         
-        # colors = sns.color_palette("husl", len(labels))
-        colors = ["steelblue", "orange", "green", "purple", "brown",]
+        default_colors = ["steelblue", "orange", "green", "purple", "brown"]
         
         for tf_idx, tf_name in enumerate(valid_tf_names):
             print(f"Processing {tf_name}...")
@@ -537,27 +814,40 @@ class SimiCVisualization(SimiCPipeline):
                     if values.std() == 0:
                         print(f"  Warning: No variance in {tf_name} for label {label}, plotting as vertical line")
                         label_name = self._get_label_name(label)
-                        ax.axvline(values.iloc[0], color=colors[label_idx], 
+                        
+                        # Use custom color if available, otherwise use default
+                        if int(label) in self.colors:
+                            color = self.colors[int(label)]
+                        else:
+                            color = default_colors[label_idx % len(default_colors)]
+                        
+                        ax.axvline(values.iloc[0], color=color, 
                                   linestyle='--', linewidth=2, label=label_name, alpha=alpha)
                         plotted_any = True
                         continue
                     
                     label_name = self._get_label_name(label)
                     
+                    # Use custom color if available, otherwise use default
+                    if int(label) in self.colors:
+                        color = self.colors[int(label)]
+                    else:
+                        color = default_colors[label_idx % len(default_colors)]
+                    
                     # Plot density with optional fill and bandwidth adjustment
                     try:
                         if fill:
                             values.plot.density(ax=ax, label=label_name, 
-                                               color=colors[label_idx], alpha=alpha, linewidth=2,
+                                               color=color, alpha=alpha, linewidth=2,
                                                bw_method=bw_adjust)
                             # Fill under the curve
                             line = ax.get_lines()[-1]
                             x_data = line.get_xdata()
                             y_data = line.get_ydata()
-                            ax.fill_between(x_data, y_data, alpha=alpha, color=colors[label_idx])
+                            ax.fill_between(x_data, y_data, alpha=alpha, color=color)
                         else:
                             values.plot.density(ax=ax, label=label_name, 
-                                               color=colors[label_idx], alpha=1.0, linewidth=2,
+                                               color=color, alpha=1.0, linewidth=2,
                                                bw_method=bw_adjust)
                         plotted_any = True
                     except Exception as plot_error:
@@ -565,16 +855,12 @@ class SimiCVisualization(SimiCPipeline):
                         # Try histogram as fallback
                         try:
                             ax.hist(values, bins=20, density=True, alpha=alpha, 
-                                   color=colors[label_idx], label=label_name, 
+                                   color=color, label=label_name, 
                                    edgecolor='black')
                             plotted_any = True
                         except Exception:
                             print(f"  Error: Could not plot histogram either")
                             continue
-                    
-                    # Add rug plot (optional, commented out as it can clutter)
-                    # ax.scatter(values, np.zeros_like(values) - 0.05 * (label_idx + 1), 
-                    #           alpha=0.3, s=1, color=colors[label_idx])
                 
                 except Exception as e:
                     print(f"  Error processing label {label}: {e}")
@@ -614,171 +900,282 @@ class SimiCVisualization(SimiCPipeline):
                 print(f"Error saving figure: {e}")
         
         return fig
-    
-    def plot_dissimilarity_heatmap(self, labels: Optional[List[Union[int, str]]] = None,
-                                   top_n_tfs: Optional[int] = None,
-                                   save: bool = True,
-                                   filename: Optional[str] = None):
+
+    def _prepare_auc_data(self, labels: Optional[List[Union[int, str]]] = None):
         """
-        Plot heatmap of regulatory dissimilarity scores.
+        Prepare AUC data and label information for visualization.
         
         Args:
-            labels: Phenotype labels to compare
-            top_n_tfs: Number of top TFs to display (by dissimilarity)
-            save: Whether to save the figure
-            filename: Custom filename for saved figure
+            labels: Phenotype labels to compare (default: all)
+            
+        Returns:
+            tuple: (labels, label_names, colors_list, auc_data_list)
         """
-        print("\n" + "="*70)
-        print(f"PLOTTING DISSIMILARITY HEATMAP")
-        print("="*70 + "\n")
-        
-        # Calculate dissimilarity scores
-        dissim_df = self.calculate_dissimilarity(select_labels=labels)
-        
-        if top_n_tfs:
-            dissim_df = dissim_df.head(top_n_tfs)
-        
-        # Create heatmap using matplotlib
-        fig, ax = plt.subplots(figsize=(8, max(6, len(dissim_df) * 0.3)))
-        
-        # Create the heatmap
-        im = ax.imshow(dissim_df.values, cmap='viridis', aspect='auto')
-        
-        # Set ticks and labels
-        ax.set_xticks(np.arange(len(dissim_df.columns)))
-        ax.set_yticks(np.arange(len(dissim_df.index)))
-        ax.set_xticklabels(dissim_df.columns, fontsize=10)
-        ax.set_yticklabels(dissim_df.index, fontsize=8)
-        
-        # Rotate the x-axis labels
-        plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
-        
-        # Add colorbar
-        cbar = plt.colorbar(im, ax=ax)
-        cbar.set_label('Dissimilarity Score', rotation=270, labelpad=20, fontsize=10)
-        
-        # Annotate cells with values
-        for i in range(len(dissim_df.index)):
-            for j in range(len(dissim_df.columns)):
-                text = ax.text(j, i, f'{dissim_df.values[i, j]:.4f}',
-                             ha="center", va="center", color="white", fontsize=6)
-        
-        # Add title and labels
-        ax.set_title('Regulatory Dissimilarity Scores', fontsize=14, fontweight='bold', pad=20)
-        ax.set_ylabel('Transcription Factors', fontsize=12)
-        
-        # Add gridlines
-        ax.set_xticks(np.arange(len(dissim_df.columns)) - 0.5, minor=True)
-        ax.set_yticks(np.arange(len(dissim_df.index)) - 0.5, minor=True)
-        ax.grid(which="minor", color="white", linestyle='-', linewidth=0.5)
-        ax.tick_params(which="minor", size=0)
-        
-        plt.tight_layout()
-        
-        if save:
-            fname = filename or f"{self.run_name}_dissimilarity_heatmap.pdf"
-            plt.savefig(self.figures_path / fname, bbox_inches='tight', dpi=300)
-            print(f"✓ Saved to {self.figures_path / fname}")
-        
-        return fig
-    
-    def plot_umap_with_activity(self, umap_df: pd.DataFrame,
-                                tf_names: Union[str, List[str]],
-                                labels: Optional[List[Union[int, str]]] = None,
-                                group_cols: Optional[List[str]] = None,
-                                save: bool = True,
-                                filename: Optional[str] = None):
-        """
-        Plot UMAP colored by TF activity scores.
-        
-        Args:
-            umap_df: DataFrame with UMAP coordinates and cell identifiers
-                    Must have columns: 'Cell', 'umap_1', 'umap_2'
-            tf_names: TF name(s) to plot activity scores for
-            labels: Phenotype labels to include
-            group_cols: Additional grouping columns to facet by (e.g., ['condition', 'treatment'])
-            save: Whether to save the figure
-            filename: Custom filename for saved figure
-        """
-        print("\n" + "="*70)
-        print(f"PLOTTING UMAP WITH ACTIVITY SCORES")
-        print("="*70 + "\n")
-        
-        if isinstance(tf_names, str):
-            tf_names = [tf_names]
-        
-        # Load AUC data
-        auc_data = self.load_results('auc_filtered')
+        # Load AUC results
+        try:
+            auc_data = self.load_results('auc_filtered')
+        except FileNotFoundError:
+            print("Error: AUC filtered results not found!")
+            return None, None, None, None
         
         if labels is None:
             labels = list(auc_data.keys())
         
-        # Check required columns
-        required_cols = ['Cell', 'umap_1', 'umap_2']
-        if not all(col in umap_df.columns for col in required_cols):
-            raise ValueError(f"umap_df must contain columns: {required_cols}")
+        # Prepare label names
+        label_names = [self._get_label_name(l) for l in labels]
         
-        n_tfs = len(tf_names)
-        fig, axes = plt.subplots(n_tfs, 1, figsize=(14, 5*n_tfs))
-        if n_tfs == 1:
-            axes = [axes]
-        
-        for tf_idx, tf_name in enumerate(tf_names):
-            print(f"Processing {tf_name}...")
-            
-            # Collect AUC scores for this TF
-            activity_data = []
-            for label in labels:
-                auc_subset = self.subset_label_specific_auc('auc_filtered', label)
-                
-                if tf_name not in auc_subset.columns:
-                    print(f"  Warning: {tf_name} not found in label {label}")
-                    continue
-                
-                scores = auc_subset[[tf_name]].copy()
-                scores['Cell'] = scores.index
-                scores.columns = ['activity_score', 'Cell']
-                scores['label'] = label
-                activity_data.append(scores)
-            
-            if not activity_data:
-                print(f"  No data found for {tf_name}")
-                continue
-            
-            activity_df = pd.concat(activity_data, ignore_index=True)
-            
-            # Merge with UMAP coordinates
-            plot_df = umap_df.merge(activity_df, on='Cell', how='inner')
-            
-            # Create scatter plot
-            ax = axes[tf_idx]
-            
-            if group_cols and all(col in plot_df.columns for col in group_cols):
-                # Create facet-like subplots
-                groups = plot_df.groupby(group_cols)
-                n_groups = len(groups)
-                
-                # This is simplified - for true faceting, would need more complex layout
-                scatter = ax.scatter(plot_df['umap_1'], plot_df['umap_2'], 
-                                   c=plot_df['activity_score'], 
-                                   cmap='inferno', s=10, alpha=0.6)
-                ax.set_title(f'{tf_name} Activity Score', fontsize=12, fontweight='bold')
+        # Get colors for labels
+        colors_list = []
+        default_colors = ["steelblue", "orange", "green", "purple", "brown"]
+        for idx, label in enumerate(labels):
+            if int(label) in self.colors:
+                colors_list.append(self.colors[int(label)])
             else:
-                scatter = ax.scatter(plot_df['umap_1'], plot_df['umap_2'], 
-                                   c=plot_df['activity_score'], 
-                                   cmap='inferno', s=10, alpha=0.6)
-                ax.set_title(f'{tf_name} Activity Score', fontsize=12, fontweight='bold')
-            
-            ax.set_xlabel('UMAP 1', fontsize=10)
-            ax.set_ylabel('UMAP 2', fontsize=10)
-            plt.colorbar(scatter, ax=ax, label='Activity Score')
-            ax.grid(alpha=0.3)
+                colors_list.append(default_colors[idx % len(default_colors)])
+        
+        # Collect AUC data for all labels
+        auc_data_list = []
+        for label in labels:
+            auc_subset = self.subset_label_specific_auc('auc_filtered', label)
+            auc_values = auc_subset.values.flatten()
+            auc_values = auc_values[~np.isnan(auc_values)]
+            auc_data_list.append(auc_values)
+            print(f"Label {label_names[labels.index(label)]}: {len(auc_values)} AUC values")
+        
+        return labels, label_names, colors_list, auc_data_list
+    
+    def plot_auc_summary_statistics(self, labels: Optional[List[Union[int, str]]] = None,
+                                   save: bool = True,
+                                   filename: Optional[str] = None):
+        """
+        Plot AUC summary statistics with boxplot, violin plot, mean bar plot, and high activity count.
+        
+        Args:
+            labels: Phenotype labels to compare (default: all)
+            save: Whether to save the figure
+            filename: Custom filename for saved figure
+        """
+        print("\n" + "="*70)
+        print("PLOTTING AUC SUMMARY STATISTICS")
+        print("="*70 + "\n")
+        
+        # Prepare data
+        labels, label_names, colors_list, auc_data_list = self._prepare_auc_data(labels)
+        if labels is None:
+            return None
+        
+        # Create figure with 2x2 subplots
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        fig.suptitle('AUC Score Summary Statistics', fontsize=16, fontweight='bold')
+        
+        # Plot each subplot using dedicated functions
+        self._plot_auc_boxplot(axes[0, 0], auc_data_list, label_names, colors_list)
+        self._plot_auc_violin(axes[0, 1], auc_data_list, label_names, colors_list)
+        self._plot_auc_mean_bar(axes[1, 0], auc_data_list, label_names, colors_list)
+        self._plot_auc_high_activity(axes[1, 1], labels, label_names, colors_list)
         
         plt.tight_layout()
         
         if save:
-            fname = filename or f"{self.run_name}_UMAP_activity.pdf"
-            plt.savefig(self.figures_path / fname, bbox_inches='tight', dpi=300)
-            print(f"✓ Saved to {self.figures_path / fname}")
+            fname = filename or f"{self.run_name}_AUC_summary_statistics.pdf"
+            try:
+                plt.savefig(self.figures_path / fname, bbox_inches='tight', dpi=300)
+                print(f"✓ Saved to {self.figures_path / fname}")
+            except Exception as e:
+                print(f"Error saving figure: {e}")
+            finally:
+                plt.close(fig)
         
         return fig
+    
+    def _plot_auc_boxplot(self, ax, auc_data_list: List, label_names: List[str], colors_list: List[str]):
+        """
+        Plot boxplot of AUC distributions.
+        
+        Args:
+            ax: Matplotlib axis object
+            auc_data_list: List of AUC value arrays for each label
+            label_names: List of label names
+            colors_list: List of colors for each label
+        """
+        bp = ax.boxplot(auc_data_list, labels=label_names, patch_artist=True)
+        for patch, color in zip(bp['boxes'], colors_list):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.6)
+        ax.set_ylabel('AUC Score', fontsize=10)
+        ax.set_title('AUC Distribution (Boxplot)', fontsize=12, fontweight='bold')
+        ax.grid(alpha=0.3)
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+    
+    def _plot_auc_violin(self, ax, auc_data_list: List, label_names: List[str], colors_list: List[str]):
+        """
+        Plot violin plot of AUC distributions.
+        
+        Args:
+            ax: Matplotlib axis object
+            auc_data_list: List of AUC value arrays for each label
+            label_names: List of label names
+            colors_list: List of colors for each label
+        """
+        parts = ax.violinplot(auc_data_list, positions=range(len(label_names)), widths=0.7, 
+                               showmeans=True, showmedians=True)
+        for i, pc in enumerate(parts['bodies']):
+            pc.set_facecolor(colors_list[i])
+            pc.set_alpha(0.6)
+        ax.set_xticks(range(len(label_names)))
+        ax.set_xticklabels(label_names)
+        ax.set_ylabel('AUC Score', fontsize=10)
+        ax.set_title('AUC Distribution (Violin Plot)', fontsize=12, fontweight='bold')
+        ax.grid(alpha=0.3)
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+    
+    def _plot_auc_mean_bar(self, ax, auc_data_list: List, label_names: List[str], colors_list: List[str]):
+        """
+        Plot mean AUC with error bars.
+        
+        Args:
+            ax: Matplotlib axis object
+            auc_data_list: List of AUC value arrays for each label
+            label_names: List of label names
+            colors_list: List of colors for each label
+        """
+        mean_aucs = [np.mean(data) for data in auc_data_list]
+        std_aucs = [np.std(data) for data in auc_data_list]
+        x_pos = np.arange(len(label_names))
+        ax.bar(x_pos, mean_aucs, yerr=std_aucs, alpha=0.7, color=colors_list,
+               edgecolor='black', capsize=5, linewidth=1.5)
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(label_names)
+        ax.set_ylabel('Mean AUC Score', fontsize=10)
+        ax.set_title('Mean AUC Score by Phenotype', fontsize=12, fontweight='bold')
+        ax.grid(alpha=0.3, axis='y')
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+    
+    def _plot_auc_high_activity(self, ax, labels: List, label_names: List[str], colors_list: List[str]):
+        """
+        Plot count of TFs with high activity (AUC > 0.5).
+        
+        Args:
+            ax: Matplotlib axis object
+            labels: List of phenotype labels
+            label_names: List of label names
+            colors_list: List of colors for each label
+        """
+        high_activity_counts = []
+        for label in labels:
+            auc_subset = self.subset_label_specific_auc('auc_filtered', label)
+            mean_auc_per_tf = auc_subset.mean(axis=0)
+            high_activity = (mean_auc_per_tf > 0.5).sum()
+            high_activity_counts.append(high_activity)
+        
+        x_pos = np.arange(len(label_names))
+        ax.bar(x_pos, high_activity_counts, alpha=0.7, color=colors_list, 
+               edgecolor='black', linewidth=1.5)
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(label_names)
+        ax.set_ylabel('Number of TFs', fontsize=10)
+        ax.set_title('TFs with High Activity (AUC > 0.5)', fontsize=12, fontweight='bold')
+        ax.grid(alpha=0.3, axis='y')
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+    
+    def _calculate_auc_statistics(self, labels: List, label_names: List[str]):
+        """
+        Calculate AUC statistics for all labels.
+        
+        Args:
+            labels: List of phenotype labels
+            label_names: List of label names
+            
+        Returns:
+            list: Table data with statistics and high activity counts
+        """
+        table_data = []
+        table_data.append(['Phenotype', 'Mean', 'Median', 'Std Dev', 'Min', 'Max', 'TFs AS > 0.5'])
+        
+        for i, label in enumerate(labels):
+            auc_subset = self.subset_label_specific_auc('auc_filtered', label)
+            auc_values = auc_subset.values.flatten()
+            auc_values = auc_values[~np.isnan(auc_values)]
+            
+            mean_val = np.mean(auc_values)
+            median_val = np.median(auc_values)
+            std_val = np.std(auc_values)
+            min_val = np.min(auc_values)
+            max_val = np.max(auc_values)
+            
+            # Calculate number of TFs with high activity (AUC > 0.5)
+            mean_auc_per_tf = auc_subset.mean(axis=0)
+            high_activity_count = (mean_auc_per_tf > 0.5).sum()
+            
+            table_data.append([label_names[i], f'{mean_val:.4f}', f'{median_val:.4f}', 
+                              f'{std_val:.4f}', f'{min_val:.4f}', f'{max_val:.4f}', str(high_activity_count)])
+        
+        return table_data
+    
+    def plot_auc_statistics_table(self, labels: Optional[List[Union[int, str]]] = None,
+                                  save: bool = True,
+                                  filename: Optional[str] = None):
+        """
+        Plot summary statistics table for AUC scores.
+        
+        Args:
+            labels: Phenotype labels to compare (default: all)
+            save: Whether to save the figure
+            filename: Custom filename for saved figure
+        """
+        print("\n" + "="*70)
+        print("PLOTTING AUC STATISTICS TABLE")
+        print("="*70 + "\n")
+        
+        # Prepare data
+        labels, label_names, _, _ = self._prepare_auc_data(labels)
+        if labels is None:
+            return None
+        
+        # Calculate statistics
+        table_data = self._calculate_auc_statistics(labels, label_names)
+        
+        # Create figure for table only
+        fig, ax = plt.subplots(figsize=(12, max(4, len(labels) * 0.8)))
+        ax.axis('off')
+        
+        # Create table
+        table = ax.table(cellText=table_data, cellLoc='center', loc='center',
+                          colWidths=[0.18, 0.13, 0.13, 0.13, 0.13, 0.13, 0.13])
+        table.auto_set_font_size(False)
+        table.set_fontsize(11)
+        table.scale(1, 2.5)
+        
+        # Style header row
+        for i in range(len(table_data[0])):
+            table[(0, i)].set_facecolor('#40466e')
+            table[(0, i)].set_text_props(weight='bold', color='white', fontsize=12)
+        
+        # Alternate row colors
+        for i in range(1, len(table_data)):
+            for j in range(len(table_data[0])):
+                if i % 2 == 0:
+                    table[(i, j)].set_facecolor('#f0f0f0')
+                else:
+                    table[(i, j)].set_facecolor('white')
+        
+        fig.suptitle('AUC Score Summary Statistics Table', fontsize=14, fontweight='bold', y=0.98)
+        plt.tight_layout()
+        
+        if save:
+            fname = filename or f"{self.run_name}_AUC_statistics_table.pdf"
+            try:
+                plt.savefig(self.figures_path / fname, bbox_inches='tight', dpi=300)
+                print(f"✓ Saved to {self.figures_path / fname}")
+            except Exception as e:
+                print(f"Error saving figure: {e}")
+            finally:
+                plt.close(fig)
+        
+        return fig
+
+# Export functions from SimiCPipeline
+SimiCVisualization.calculate_dissimilarity = SimiCPipeline.calculate_dissimilarity
+SimiCVisualization.subset_label_specific_auc = SimiCPipeline.subset_label_specific_auc
+SimiCVisualization.get_TF_network = SimiCPipeline.get_TF_network
+SimiCVisualization.get_TF_auc = SimiCPipeline.get_TF_auc

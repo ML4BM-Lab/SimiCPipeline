@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Optional, Union
 from importlib.resources import files
 
-class SimiCPipeline:
+from simicpipeline.core import SimiCBase
+
+class SimiCPipeline(SimiCBase):
     """
     Main pipeline class for running the complete SimiC analysis workflow.
     Handles data loading, regression, filtering, and AUC calculation.
@@ -22,7 +24,7 @@ class SimiCPipeline:
 
     def __init__(self, 
                  project_dir: str,
-                 run_name: Optional[str] = None)-> None:
+                 run_name: Optional[str] = None) -> None:
         """
         Initialize the SimiC pipeline.
 
@@ -30,9 +32,8 @@ class SimiCPipeline:
             project_dir (str): Working directory for input/output
             run_name (str): Optional name for this run (used in output filenames)
         """
-        # Set project directory and run name
-        self.project_dir = Path(project_dir)
-        self.run_name = run_name if run_name else "simic_run"
+        # Initialize base pipeline
+        super().__init__(project_dir=project_dir)
         
         # Initialize directory paths
         self.input_path = self.project_dir / "inputFiles"
@@ -40,29 +41,41 @@ class SimiCPipeline:
         self.matrices_path = self.output_path / "matrices"
         
         # Create output directories if they don't exist
-        if not self.project_dir.exists():
-            print("Creating project directory...")
-            self.project_dir.mkdir(parents=True, exist_ok=True)
         self.output_path.mkdir(parents=True, exist_ok=True)
         self.matrices_path.mkdir(parents=True, exist_ok=True)
         
+        # Set run name
+        self.run_name = run_name if run_name else "simic_run"
+        
         # Default parameters
-        self.n_tfs = 100 # Number of transcription factorse
-        self.n_targets = 1000 # Number of target genes
-        self.lambda1 = 1e-2 # L1 regularization parameter (sparsity)
-        self.lambda2 = 1e-5 # L2 regularization parameter (network similarity)e        
-        self.num_rep = 1 # Number of repetitions for test evaluation
-        self.similarity = True # Enables similarity constraint for Lipswitz constant (RCD process)         
-        self.max_rcd_iter = 500000 # Maximum number of RCD iterations         
-        self.df_with_label = False # Whether the input dataframe has labels in the last column or not.         
-        self.cross_val = False # Whether to perform cross-validation to select optimal lambdasf        
-        self.k_cross_val = 5 # Number of folds for cross-validation
-        self.max_rcd_iter_cv = 10000 # Maximum number of RCD iterations in the cross-validation step
-        self.list_of_l1 = [1e-1, 1e-2,1e-3, 10] # List of L1 values for cross-validation
-        self.list_of_l2 = [1e-1, 1e-2,1e-3, 10] # List of L2 values for cross-validationity constraint for Lipswitz constant (RCD process)
+        self.n_tfs = ""
+        self.n_targets = ""
+        self.lambda1 = 1e-2
+        self.lambda2 = 1e-5
+        self.num_rep = 1
+        self.similarity = True
+        self.max_rcd_iter = 500000
+        self.df_with_label = False
+        self.cross_val = False
+        self.k_cross_val = 5
+        self.max_rcd_iter_cv = 10000
+        self.list_of_l1 = [1e-1, 1e-2, 1e-3, 10]
+        self.list_of_l2 = [1e-1, 1e-2, 1e-3, 10]
+        
         # Timing
         self.timing = {}
-
+        
+        # Input file paths (to be set by set_input_paths)
+        self.p2df = None
+        self.p2assignment = None
+        self.p2tf = None
+        
+        # Output file paths (to be set by set_output_paths)
+        self.p2simic_matrices = None
+        self.p2filtered_matrices = None
+        self.p2auc_raw = None
+        self.p2auc_filtered = None
+        
 # Path management functions       
     def set_input_paths(self, 
                   p2df: Union[str, Path],
@@ -113,63 +126,6 @@ class SimiCPipeline:
         self.p2filtered_matrices = self.run_path / f"{base_name}_simic_matrices_filtered_BIC.pickle"
         self.p2auc_raw = self.run_path / f"{base_name}_wAUC_matrices.pickle"
         self.p2auc_filtered = self.run_path / f"{base_name}_wAUC_matrices_filtered_BIC.pickle"
-    
-    def set_paths_custom(self, 
-                         p2df: Union[str, Path],
-                         p2tf: Union[str, Path],
-                         p2assignment: Optional[Union[str, Path]] = None,
-                         p2simic_matrices: Optional[Union[str, Path]] = None, 
-                         p2filtered_matrices: Optional[Union[str, Path]] = None, 
-                         p2auc_raw: Optional[Union[str, Path]] = None, 
-                         p2auc_filtered: Optional[Union[str, Path]] = None):
-        """
-        Set up all file paths for input and output with custom paths (intended for loading previous results).
-        
-        Args:
-            p2df (str): Custom path to expression matrix file. Must be a pickle file with a dataframe format (genes x cells).
-            p2tf (str): Custom path to TF list file. Must be a pickle file with a list of TF names.
-            p2assignment (str): Custom path to phenotype assignment file. Must be a plain text file 1 col with numbers. 0 for Basline. Should folow cell order in expression expression matrix.
-            p2simic_matrices (str): Custom path to SimiC matrices file. Must be a pickle file.
-            p2filtered_matrices (str): Custom path to filtered matrices file. Must be a pickle file.
-            p2auc_raw (str): Custom path to AUC raw file. Must be a pickle file.
-            p2auc_filtered (str): Custom path to AUC filtered file. Must be a pickle file.
-        """
-        # Input paths - use custom paths if provided, otherwise raise error
-        if not Path(p2df).exists():
-            raise FileNotFoundError("Invalid path to expression matrix dataframe (p2df).")
-        self.p2df = Path(p2df)
-
-        if not Path(p2assignment).exists():
-            raise FileNotFoundError("Invalid path to phenotype assignment file (p2assignment).")
-        self.p2assignment = Path(p2assignment)
-    
-        if not Path(p2tf).exists():
-            raise FileNotFoundError("Invalid path to TF list file (p2tf).")
-        self.p2tf = Path(p2tf)
-        
-        # Output paths
-        if not Path(p2simic_matrices).exists():
-            raise FileNotFoundError(f"Invalid path to SimiC matrices file (p2simic_matrices).")
-        self.p2simic_matrices = Path(p2simic_matrices)
-        
-        if not Path(p2filtered_matrices).exists():
-            print(f"WARNING: Path to filtered matrices file (p2filtered_matrices) not found. \n Trying with default name")
-            p2filtered_matrices_new = p2filtered_matrices.with_stem(p2filtered_matrices.stem +"filtered_BIC")
-            if not Path(p2filtered_matrices_new).exists():
-                print("Warning: Alternative filtered matrices file not found. Will continue without it. Please run `filter_weights")    
-                self.p2filtered_matrices = Path(p2filtered_matrices) # Keep user name
-            else:
-                self.p2filtered_matrices = Path(p2filtered_matrices_new) # Change to alternative name
-        else: 
-            self.p2filtered_matrices = Path(p2filtered_matrices)
-        
-        if not Path(p2auc_raw).exists():
-            print(f"WARNING: Path to AUC raw file (p2auc_raw) not found. \n Will continue without it. Please run `calculate_auc`")
-        self.p2auc_raw = p2auc_raw # Keep user name
-        
-        if not Path(p2auc_filtered):
-            print(f"WARNING: Path to AUC raw file (p2auc_raw) not found. \n Will continue without it. Please run `calculate_auc(use_filtered = True)`") 
-        self.p2auc_filtered = Path(p2auc_filtered)
 
     def validate_inputs(self):
         """Validate that all required input files exist."""
@@ -187,8 +143,6 @@ class SimiCPipeline:
         print("✓ All required input files found")
 # Parameter management functions 
     def set_parameters(self,
-                       n_tfs: Optional[int] = None,
-                       n_targets: Optional[int] = None,
                        lambda1: Optional[float] = None,
                        lambda2: Optional[float] = None,
                        similarity: Optional[bool] = None,
@@ -205,8 +159,6 @@ class SimiCPipeline:
         Set pipeline parameters.
 
         Args:
-            n_tfs (int): Number of transcription factors
-            n_targets (int): Number of target genes
             lambda1 (float): L1 regularization parameter (sparsity)
             lambda2 (float): L2 regularization parameter (network similarity)
             similarity (bool): Enables similarity constraint for Lipswitz constant (RCD process)
@@ -221,10 +173,6 @@ class SimiCPipeline:
             run_name (str): Name for this run
         """
         # Update parameters if provided
-        if n_tfs is not None:
-            self.n_tfs = n_tfs
-        if n_targets is not None:
-            self.n_targets = n_targets
         if lambda1 is not None:
             self.lambda1 = lambda1
         if lambda2 is not None:
@@ -297,7 +245,10 @@ class SimiCPipeline:
         
         te = time.time()
         self.timing['simic_regression'] = te - ts
-        print(f"\n✓ SimiC regression completed in {self._format_time(te - ts)}")
+        print(f"\n✓ SimiC regression completed in {self.format_time(te - ts)}")
+        simic_results = self.load_results('Ws_raw')
+        self.n_tfs = len(simic_results['TF_ids'])
+        self.n_targets = len(simic_results['query_targets'])
 
     def filter_weights(self, variance_threshold: float = 0.9):
         """
@@ -426,7 +377,7 @@ class SimiCPipeline:
             
             te = time.time()
             self.timing['filtering'] = te - ts
-            print(f"\n✓ Weight filtering completed in {self._format_time(te - ts)}")
+            print(f"\n✓ Weight filtering completed in {self.format_time(te - ts)}")
             print(f"Filtered weights saved to: {self.p2filtered_matrices}")
             
             return True
@@ -437,9 +388,13 @@ class SimiCPipeline:
             traceback.print_exc()
             return False
 
-    def calculate_auc(self, use_filtered=False, adj_r2_threshold=0.7, 
-                     select_top_k_targets=None, percent_of_target=1, 
-                     sort_by='expression', num_cores=0):
+    def calculate_auc(self,
+                      use_filtered=False, 
+                      adj_r2_threshold: float = 0.7, 
+                      select_top_k_targets: int = None,
+                      percent_of_target: float = 1, 
+                      sort_by:str ='expression', 
+                      num_cores: int = 0):
         """
         Calculate AUC matrices.
 
@@ -452,6 +407,8 @@ class SimiCPipeline:
             num_cores (int): Number of cores for parallel processing
         """
         from simicpipeline.core.aucprocessor import AUCProcessor
+        if sort_by not in ['expression', 'weight', 'adj_r2']:
+            raise ValueError("sort_by must be one of 'expression', 'weight', or 'adj_r2'")
         
         weight_file = self.p2filtered_matrices if use_filtered else self.p2simic_matrices
         output_file = self.p2auc_filtered if use_filtered else self.p2auc_raw
@@ -477,7 +434,7 @@ class SimiCPipeline:
         
         te = time.time()
         self.timing[f'auc_{file_type}'] = te - ts
-        print(f"\n✓ AUC calculation completed in {self._format_time(te - ts)}")
+        print(f"\n✓ AUC calculation completed in {self.format_time(te - ts)}")
 
 # Wrapper function to run the complete pipeline
     def run_pipeline(self,
@@ -504,9 +461,6 @@ class SimiCPipeline:
         print("\n" + "="*70)
         print("STARTING SIMIC PIPELINE")
         print("="*70)
-        
-        # Validate inputs
-        self.validate_inputs()
         
         # Run regression
         self.run_simic_regression()
@@ -552,7 +506,7 @@ class SimiCPipeline:
         print(f"  - Clusters: {self.k_cluster}")
         print(f"\nTiming:")
         for step, duration in self.timing.items():
-            print(f"  - {step}: {self._format_time(duration)}")
+            print(f"  - {step}: {self.format_time(duration)}")
         print(f"\nAvailable Results:")
         for result_type in ['Ws_raw', 'Ws_filtered', 'auc_raw', 'auc_filtered']:
             try:
@@ -562,63 +516,6 @@ class SimiCPipeline:
                 print(f"✗ {result_type}")
         print("\n" + "="*70)
 
-    @staticmethod
-    def _format_time(seconds):
-        """Format time duration."""
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        secs = int(seconds % 60)
-        
-        if hours > 0:
-            return f"{hours}h {minutes}min {secs}s"
-        elif minutes > 0:
-            return f"{minutes}min {secs}s"
-        else:
-            return f"{secs}s"
-
-    def load_results(self, result_type='Ws_filtered'):
-        """
-        Load pipeline results.
-
-        Args:
-            result_type (str): Type of results to load ('Ws_raw', 'Ws_filtered', 'auc_raw', 'auc_filtered')
-
-        Returns:
-            dict: Loaded results
-        """
-        file_map = {
-            'Ws_raw': self.p2simic_matrices,
-            'Ws_filtered': self.p2filtered_matrices,
-            'auc_raw': self.p2auc_raw,
-            'auc_filtered': self.p2auc_filtered
-        }
-        
-        if result_type not in file_map:
-            raise ValueError(f"result_type must be one of {list(file_map.keys())}")
-        
-        result_file = file_map[result_type]
-        
-        if not result_file.exists():
-            raise FileNotFoundError(f"Result file not found: {result_file}")
-        
-        with open(result_file, 'rb') as f:
-            return pickle.load(f)
-        
-    def available_results(self):
-        """
-        Check which results are available.
-        
-        Returns:
-            dict: Availability of each result type
-        """
-        print(f"\nAvailable Results:")
-        for result_type in ['Ws_raw', 'Ws_filtered', 'auc_raw', 'auc_filtered']:
-            try:
-                self.load_results(result_type)
-                print(f"✓ {result_type}")
-            except FileNotFoundError:
-                print(f"✗ {result_type}")
-        print("\n" + "="*70)
 
 # Functions for analyzing results
     def get_TF_network(self, TF_name: str, stacked: bool = False):
@@ -880,4 +777,3 @@ class SimiCPipeline:
                 print(f"  {tf}: {row['MinMax_score']:.4f}")
         
         return MinMax_df_sorted
-    

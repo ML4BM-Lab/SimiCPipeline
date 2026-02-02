@@ -11,9 +11,9 @@ import sys
 from joblib import Parallel, delayed
 from pathlib import Path
 from simicpipeline.utils.io import write_pickle
+from simicpipeline.core import SimiCBase
 
-
-class BaseProcessor:
+class BaseProcessor(SimiCBase):
     """
     Base class for SimiC processors.
     Provides common functionality for file handling and data loading.
@@ -40,10 +40,10 @@ class BaseProcessor:
             raise FileNotFoundError(f"Results file not found: {self.p2res}")
 
 
-class AUCProcessor(BaseProcessor):
+class AUCProcessor(SimiCBase):
     """
     A class to handle the AUC calculation process.
-    Inherits from BaseProcessor for common functionality.
+    Inherits from SimiCBase for common functionality.
     """
 
 
@@ -242,10 +242,7 @@ def run_AUCprocessor(p2df, p2res, p2saved_file, percent_of_target=1, sort_by='ex
     sys.stdout.flush()
     print("Loading and normalizing weights...")
     processor.normalized_by_target_norm()
-    
-    # if debug:
-    #     import ipdb; ipdb.set_trace()
-    
+        
     # Compute and save the AUC matrices
     print("Computing and saving AUC matrices...")
     print(f"Starting at {time.strftime('%X %x %Z')}")

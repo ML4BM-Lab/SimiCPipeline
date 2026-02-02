@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from typing import Optional, Tuple, Union
 from pathlib import Path
 import pickle
@@ -14,6 +13,55 @@ def install_package(package_name):
    import sys
    subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
 
+# Directories
+
+
+def print_tree(directory: Union[Path, str] = Path('.'),
+               prefix: str = "", 
+               max_depth: Optional[int] = 1,
+               current_depth: int = 0) -> None:
+    """
+    Print a tree-like directory structure.
+    
+    Args:
+        directory: Path to the directory to visualize
+        prefix: Prefix for tree branches (used internally for recursion)
+        max_depth: Maximum depth to traverse (None for unlimited)
+        current_depth: Current recursion depth (used internally)
+    
+    Example:
+        >>> print_tree(Path("src"))
+        src/
+        ├── simicpipeline/
+        │   ├── __init__.py
+        │   ├── core/
+        │   │   ├── __init__.py
+        │   │   ├── main.py
+        │   └── utils/
+        │       └── io.py
+    """
+    if max_depth is not None and current_depth >= max_depth:
+        return
+    
+    directory = Path(directory)
+    
+    # Get all items in directory
+    try:
+        items = sorted(directory.iterdir(), key=lambda x: (not x.is_dir(), x.name))
+    except PermissionError:
+        print(f"{prefix}[Permission Denied]")
+        return
+    
+    for i, item in enumerate(items):
+        is_last = i == len(items) - 1
+        current_prefix = "└── " if is_last else "├── "
+        print(f"{prefix}{current_prefix}{item.name}{'/' if item.is_dir() else ''}")
+        
+        if item.is_dir():
+            extension = "    " if is_last else "│   "
+            print_tree(item, prefix + extension, max_depth, current_depth + 1)
+
+# Loaders
 def load_from_anndata(
     path: Union[str, Path],
 ) -> object:
@@ -101,7 +149,7 @@ def load_from_matrix_market(
 
     return df
 
-
+# Writers
 def write_pickle(obj, file_path):
     file_path = Path(file_path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,6 +162,29 @@ def write_pickle(obj, file_path):
     except Exception as e:
         print(f"Pickle failed with error: {e}")
 
+
+@staticmethod
+def format_time(seconds: float) -> str:
+    """
+    Format time duration in human-readable format.
+    
+    Args:
+        seconds (float): Duration in seconds
+        
+    Returns:
+        str: Formatted time string (e.g., "1h 30min 45s")
+    """
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    
+    if hours > 0:
+        return f"{hours}h {minutes}min {secs}s"
+    elif minutes > 0:
+        return f"{minutes}min {secs}s"
+    else:
+        return f"{secs}s"
+        
 #### Functions from https://github.com/jianhao2016/SimiC/code/simiclasso/common_io.py #########
 # def preprocessing_expression_mat(X_raw):
 #     '''

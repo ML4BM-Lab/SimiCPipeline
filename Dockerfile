@@ -27,8 +27,11 @@ WORKDIR /home/
 
 RUN git clone https://github.com/irenemaring/SimiCPipeline.git \
     && cd SimiCPipeline && \
-    poetry install && \
-    poetry run python -m ipykernel install --user --name simicpipeline --display-name "SimiC Pipeline Kernel"
+    poetry install --with dev && \
+    poetry run python -m pip install -e . && \
+    poetry run python -m ipykernel install --user --name simicpipeline --display-name "SimiC Pipeline Kernel" && \
+    poetry run python -c "import simicpipeline; print('SimiCPipeline successfully installed')"
 
+WORKDIR /home/SimiCPipeline
 EXPOSE 8888
 CMD ["/bin/bash"]
