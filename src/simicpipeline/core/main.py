@@ -129,12 +129,12 @@ class SimiCPipeline(SimiCBase):
 
     def validate_inputs(self):
         """Validate that all required input files exist."""
-        if self.p2assignment is None & self.df_with_label is False:
+        if self.p2assignment is None and self.df_with_label is False:
             raise ValueError("Either a phenotype assignment file (p2assignment) must be provided or the expression dataframe must contain labels in the last column (set df_with_label=True).")
+        required_files = [self.p2df, self.p2tf]
+        if self.p2assignment is not None:
+            required_files.append(self.p2assignment)
         
-        required_files = [self.p2df, self.p2assignment, self.p2tf]
-        if self.p2assignment is None & self.df_with_label is True:
-            required_files = [self.p2df, self.p2tf]
         missing_files = [f for f in required_files if not f.exists()]
         
         if missing_files:
