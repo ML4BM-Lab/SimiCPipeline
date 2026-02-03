@@ -235,7 +235,7 @@ class AUCProcessor(SimiCBase):
         self.AUC_dict = AUC_dict
         return AUC_dict
 
-    def save_AUC_dict(self, p2saved_file, adj_r2_threshold=0.7, select_top_k_targets=None, percent_of_target=1, sort_by='expression', num_cores=None):
+    def save_AUC_dict(self, p2auc_file, adj_r2_threshold=0.7, select_top_k_targets=None, percent_of_target=1, sort_by='expression', num_cores=None):
         """
         Calculate and save the AUC matrix to a file.
         """
@@ -244,10 +244,10 @@ class AUCProcessor(SimiCBase):
             percent_of_target=percent_of_target, sort_by=sort_by, num_cores = num_cores
         )
 
-        write_pickle(AUC_dict, p2saved_file)
+        write_pickle(AUC_dict, p2auc_file)
 
 
-def run_AUCprocessor(p2df, p2res, p2saved_file, percent_of_target=1, sort_by='expression', adj_r2_threshold=0.7, select_top_k_targets=None, debug=False, num_cores=0):
+def run_AUCprocessor(p2df, p2res, p2auc_file, percent_of_target=1, sort_by='expression', adj_r2_threshold=0.7, select_top_k_targets=None, debug=False, num_cores=0):
     """
     Main function to calculate and save the AUC matrix using the AUCProcessor class.
     """
@@ -262,12 +262,12 @@ def run_AUCprocessor(p2df, p2res, p2saved_file, percent_of_target=1, sort_by='ex
     print("Computing and saving AUC matrices...")
     print(f"Starting at {time.strftime('%X %x %Z')}")
     processor.save_AUC_dict(
-        p2saved_file,
+        p2auc_file,
         adj_r2_threshold=adj_r2_threshold,
         select_top_k_targets=select_top_k_targets,
         percent_of_target=percent_of_target,
         sort_by=sort_by,
         num_cores=num_cores
     )
-    print(f"AUC matrices saved to: {p2saved_file}")
+    print(f"AUC matrices saved to: {p2auc_file}")
     print(f"Finishing at {time.strftime('%X %x %Z')}")

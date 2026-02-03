@@ -411,7 +411,7 @@ class SimiCPipeline(SimiCBase):
             raise ValueError("sort_by must be one of 'expression', 'weight', or 'adj_r2'")
         
         weight_file = self.p2filtered_matrices if use_filtered else self.p2simic_matrices
-        output_file = self.p2auc_filtered if use_filtered else self.p2auc_raw
+        p2auc_file = self.p2auc_filtered if use_filtered else self.p2auc_raw
         
         file_type = "filtered" if use_filtered else "raw"
         sys.stdout.flush()
@@ -424,18 +424,31 @@ class SimiCPipeline(SimiCBase):
         processor = AUCProcessor(self.project_dir, self.p2df, str(weight_file))
         processor.normalized_by_target_norm()
         processor.save_AUC_dict(
-            str(output_file),
+            p2auc_file=str(p2auc_file),
             adj_r2_threshold=adj_r2_threshold,
             select_top_k_targets=select_top_k_targets,
             percent_of_target=percent_of_target,
             sort_by=sort_by,
             num_cores=num_cores
         )
-        
         te = time.time()
         self.timing[f'auc_{file_type}'] = te - ts
+        
         print(f"\n✓ AUC calculation completed in {self.format_time(te - ts)}")
 
+        # Automatically save concatenated AUC for all labels
+        print("\nCollecting AUC for all labels...")
+        res = self.load_results('Ws_filtered')
+        labels=list(res['weight_dic'].keys())
+        auc_subset_list = []
+        for label in labels:
+            auc_subset = self.subset_label_specific_auc('auc_filtered',label=label)
+            auc_subset_list.append(auc_subset)
+        auc_subset_all = pd.concat(auc_subset_list, axis=0)
+        
+        out_file= p2auc_file.with_name(p2auc_file.stem + "_collected.csv")
+        auc_subset_all.to_csv("all_labels_auc_filtered.csv")
+        print(f"✓ Collected AUC for all labels saved to: {out_file.with_name(out_file.stem + '_collected.csv')}")
 # Wrapper function to run the complete pipeline
     def run_pipeline(self,
                      skip_filtering=False,
