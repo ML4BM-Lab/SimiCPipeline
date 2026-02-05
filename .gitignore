@@ -9,3 +9,5 @@ dist/
 .cache/
 .pytest_cache/
 .mypy_cache/
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/

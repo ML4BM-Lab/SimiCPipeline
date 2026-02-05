@@ -15,7 +15,7 @@ Author: Irene Marín-Goñi
 WORKDIR = '/path/to/your/working/directory'
 
 # Path to your input data file (h5ad format)
-INPUT_DATA = 'path/to/your/input_file.h5ad'
+INPUT_DATA = 'path/to/your/input_file.h5ad' # Check tutorial for alternative data loading options
 
 # Project directory where output files will be saved
 PROJECT_DIR = './SimiCExampleRun'
@@ -152,7 +152,7 @@ print("\nSaving experiment files...")
 experiment.save_experiment_files(
     run_data=subset_data,
     matrix_filename='expression_matrix.pickle',
-    tf_filename='TF_list.pickle',
+    tf_filename='TF_list.csv',
     annotation=ANNOTATION_COLUMN
 )
 

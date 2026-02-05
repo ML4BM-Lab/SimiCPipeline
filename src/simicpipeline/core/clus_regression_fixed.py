@@ -17,6 +17,7 @@ import random
 import copy
 import itertools
 import sys
+from pathlib import Path
 from typing import Optional, List
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
@@ -338,6 +339,7 @@ def simicLASSO_op(*,  # Force all arguments to be keyword-only
         p2tf: str,
         p2assignment: Optional[str] = None,
         p2saved_file: str,
+        df_with_label: bool = False,
         similarity: bool = True,
         lambda1: float = 1e-2,
         lambda2: float = 1e-5,
@@ -346,7 +348,6 @@ def simicLASSO_op(*,  # Force all arguments to be keyword-only
         k_cv: int = 5,
         max_rcd_iter_cv: int = 10000,
         num_rep: int = 1,
-        df_with_label: bool = True,
         list_of_l1: Optional[List[float]] = None,
         list_of_l2: Optional[List[float]] = None 
 ) -> None:
@@ -362,6 +363,7 @@ def simicLASSO_op(*,  # Force all arguments to be keyword-only
         p2assignment (str): path to clustering order assignment file.
                       a text file with each line corresponding to cell order.
         p2saved_file (str): path to save the output weight dictionary.
+        df_with_label (bool): Whether the dataframe contains a label column with assignment labels.
         similarity (bool): Enables similarity constraint for Lipswitz constant (RCD process).
         lambda1 (float): L1 regularization parameter (sparsity).
         lambda2 (float): L2 regularization parameter (network similarity).
@@ -370,14 +372,22 @@ def simicLASSO_op(*,  # Force all arguments to be keyword-only
         k_cv (int): Number of folds for cross-validation.
         max_rcd_iter_cv (int): Maximum number of RCD iterations in the cross-validation step.
         num_rep (int): Number of repetitions for test evaluation.
-        df_with_label (bool): Whether the dataframe contains a label column with assignment labels.
         list_of_l1 (list): List of L1 values for cross-validation.
         list_of_l2 (list): List of L2 values for cross-validation.
     Returns: 
         save the weight dictionary and gene list to p2saved_file.
     '''
-    original_df = pd.read_pickle(p2df)
+    p2df = Path(p2df)
+    if p2df.suffix == '.pickle':
+        original_df = pd.read_pickle(p2df)
+    elif p2df.suffix == '.csv':
+        original_df = pd.read_csv(p2df, index_col = 0, header = 0)
+    else:
+        raise ValueError('Dataframe file format not supported! Please provide a .pickle or .csv file.')
+    
     if df_with_label:
+        if 'label' not in original_df.columns:
+            raise ValueError("Dataframe is indicated to contain label column, but 'label' column not found in dataframe!")
         label_idx = list(original_df.columns).index('label')
         feat_cols = list(original_df.columns)
         feat_cols.pop(label_idx)
@@ -405,7 +415,15 @@ def simicLASSO_op(*,  # Force all arguments to be keyword-only
     print('-' * 7)
     
     # Read TF list
-    tf_list = pd.read_pickle(p2tf)
+    p2tf = Path(p2tf)
+    if p2tf.suffix == '.pickle':
+        tf_list = pd.read_pickle(p2tf)
+    elif p2tf.suffix == '.csv':
+        tf_df = pd.read_csv(p2tf, header = None)
+        tf_list = tf_df.iloc[:,0].tolist()
+    else:
+        raise ValueError('TF list file format not supported! Please provide a .pickle or .csv file.')
+    
     if isinstance(tf_list, pd.DataFrame):
         tf_list = tf_list.iloc[:,0].tolist()
     # Check that tf_list contains tfs found in df columns
@@ -428,19 +446,24 @@ def simicLASSO_op(*,  # Force all arguments to be keyword-only
     if cross_val == True:
         ### run cross_validation!!!!!! #############
         sys.stdout.flush()
-        print('start cross validation!!!')
+        print("\n" + "-"*70)
+        print('Sart cross validation!!!')
+        print("-"*70 + "\n")
         print(f"Trying lambda1 = {list_of_l1} and lambda2 = {list_of_l2}")
         l1_opt, l2_opt, r2_opt = cross_validation(mat_dict_train, similarity, list_of_l1, list_of_l2, k_cv, max_rcd_iter_cv)
         sys.stdout.flush()
-        print('cv done! lambda1 = {}, lambda2 = {}, opt R squared on eval {:.4f}'.format(l1_opt, l2_opt, r2_opt))
-        print('-' * 7)
+        print("Criss Validation done! \n")
+        print('Selected: lambda1 = {}, lambda2 = {}, opt R squared on eval {:.4f}'.format(l1_opt, l2_opt, r2_opt))
+        print('-' * 70)
         sys.stdout.flush()
         lambda1 = l1_opt
         lambda2 = l2_opt
         ############### end of cv ####################
 
     #### optimize using RCD
-    print('------ Begin the regression part...')
+    print("\n" + "-"*70)
+    print('Begin the SimiC Regression!!!')
+    print("-"*70 + "\n")
     train_error, test_error = [], []
     r2_final_train, r2_final_test = [], []
     r2_final_0 = 0

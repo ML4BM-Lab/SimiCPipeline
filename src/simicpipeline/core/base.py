@@ -140,6 +140,8 @@ class SimiCBase:
         if not hasattr(self, 'p2auc_filtered'):
             raise AttributeError("Paths to filtered AUC files not set. Please run `set_paths_custom()` first.")
         
+        if self.p2simic_matrices is None or self.p2filtered_matrices is None or self.p2auc_raw is None or self.p2auc_filtered is None:
+            raise ValueError("One or more result paths are not set. Please run `set_input_paths()` or `set_paths_custom()` first.")
         file_map = {
             'Ws_raw': self.p2simic_matrices,
             'Ws_filtered': self.p2filtered_matrices,

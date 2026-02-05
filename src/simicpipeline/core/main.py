@@ -442,7 +442,7 @@ class SimiCPipeline(SimiCBase):
         labels=list(res['weight_dic'].keys())
         auc_subset_list = []
         for label in labels:
-            auc_subset = self.subset_label_specific_auc('auc_filtered',label=label)
+            auc_subset = self.subset_label_specific_auc(f'auc_{file_type}',label=label)
             auc_subset_list.append(auc_subset)
         auc_subset_all = pd.concat(auc_subset_list, axis=0)
         
@@ -505,6 +505,13 @@ class SimiCPipeline(SimiCBase):
         self._print_summary()
 
     def _print_summary(self):
+        try:
+            res = self.load_results("Ws_raw")  # Load results to get number of TFs and targets for summary
+            self.n_tfs = len(res['TF_ids'])
+            self.n_targets = len(res['query_targets'])
+        except:
+            self.n_tfs = "Unknown (results not found)"
+            self.n_targets = "Unknown (results not found)"
         """Print pipeline execution summary."""
         print("\n" + "="*70)
         print("PIPELINE EXECUTION SUMMARY")
@@ -519,13 +526,7 @@ class SimiCPipeline(SimiCBase):
         print(f"\nTiming:")
         for step, duration in self.timing.items():
             print(f"  - {step}: {self.format_time(duration)}")
-        print(f"\nAvailable Results:")
-        for result_type in ['Ws_raw', 'Ws_filtered', 'auc_raw', 'auc_filtered']:
-            try:
-                self.load_results(result_type)
-                print(f"✓ {result_type}")
-            except FileNotFoundError:
-                print(f"✗ {result_type}")
+        self.available_results()
         print("\n" + "="*70)
 
 
