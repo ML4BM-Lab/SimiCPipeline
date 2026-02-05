@@ -14,6 +14,6 @@ __all__ = [
     "load_from_anndata",
     "write_pickle",
     "install_package",
-    "format_time"
+    "format_time",
     "print_tree"
 ]

@@ -39,14 +39,36 @@ class SimiCBase:
     def format_time(self, seconds: float) -> str:
         return format_time(seconds)
   
-    def print_project_info(self, max_depth:int = 3) -> dict:
+    def print_project_info(self, max_depth:int = 3) -> None:
         """
         Get information about the project structure.
         
         Returns:
             dict: Dictionary with project paths and status
         """
-        return print_tree(self.project_dir, prefix="", max_depth=max_depth)
+        print_tree(directory = self.project_dir, prefix="", max_depth=max_depth)
+    
+    def assign_path(self, attr_name, path_value, force_flag, must_exist=True, create_dir=False):
+        """
+        Assigns self.attr_name only if path_value is not None.
+        Checks existence unless force=True.
+        Optionally creates directory.
+        """
+        if path_value is None:
+            return  # skip entirely
+
+        path_obj = Path(path_value)
+
+        if not force_flag and must_exist and not path_obj.exists():
+            raise FileNotFoundError(
+                f"Invalid path for {attr_name}: {path_obj}"
+            )
+        # Directory creation if needed
+        if create_dir:
+            path_obj.mkdir(parents=True, exist_ok=True)
+
+        # Assign to self
+        setattr(self, attr_name, path_obj)
 
     def set_paths_custom(self, 
                          force = False,
@@ -78,56 +100,26 @@ class SimiCBase:
             FileNotFoundError: If paths do not exist.
             Self for method chaining
         """
+    
         print("\n" + "="*70)
         print("SETTING CUSTOM PATHS")
         print("="*70 + "\n")
-        if force:
-            print("Force mode enabled: Skipping path existence checks.")
-            self.p2df = Path(p2df)
-            self.p2assignment = Path(p2assignment)
-            self.p2tf = Path(p2tf)
-            self.p2simic_matrices = Path(p2simic_matrices)
-            self.p2filtered_matrices = Path(p2filtered_matrices)
-            self.p2auc_raw = Path(p2auc_raw)
-            self.p2auc_filtered = Path(p2auc_filtered)
-            self.p2figures = Path(p2figures) 
-            print("\n" + "="*70 + "\n")
-            return self
-        # Input paths - use custom paths if provided, otherwise raise error
-        if p2df is not None and not Path(p2df).exists():
-            raise FileNotFoundError("Invalid path to expression matrix dataframe (p2df).")
-        self.p2df = Path(p2df)
+        self.assign_path("p2df", p2df, force)
+        self.assign_path("p2tf", p2tf, force)
+        self.assign_path("p2assignment", p2assignment, force)
 
-        if p2assignment is not None and not Path(p2assignment).exists():
-            raise FileNotFoundError("Invalid path to phenotype assignment file (p2assignment).")
-        self.p2assignment = Path(p2assignment)
+        self.assign_path("p2simic_matrices", p2simic_matrices, force)
+        self.assign_path("p2filtered_matrices", p2filtered_matrices, force)
+
+        self.assign_path("p2auc_raw", p2auc_raw, force)
+        self.assign_path("p2auc_filtered", p2auc_filtered, force)
+
+        # Figures directory: create if missing
+        self.assign_path("p2figures", p2figures, force, must_exist=False, create_dir=True)
+
+        print("✓ Custom paths successfully set.")
+        print("\n" + "=" * 70 + "\n")
         
-        if p2tf is not None and not Path(p2tf).exists():
-            raise FileNotFoundError("Invalid path to TF list file (p2tf).")
-        self.p2tf = Path(p2tf)
-        
-        if p2simic_matrices is not None and not Path(p2simic_matrices).exists():
-            raise FileNotFoundError("Invalid path to SimiC raw matrices file (p2simic_matrices).")
-        self.p2simic_matrices = Path(p2simic_matrices)
-        if p2filtered_matrices is not None and not Path(p2filtered_matrices).exists():
-            raise FileNotFoundError("Invalid path to filtered matrices file (p2filtered_matrices).\n" \
-                                     "Provide a valid path or run `SimiCPipeline.filter_weights()`.")
-        self.p2filtered_matrices = Path(p2filtered_matrices)
-        if p2auc_raw is not None and not Path(p2auc_raw).exists():
-            raise FileNotFoundError("Invalid path to raw AUC matrices file (p2auc_raw).\n"
-                                    "Provide a valid path or run `SimiCPipeline.calculate_auc()`.")
-        self.p2auc_raw = Path(p2auc_raw)
-        if p2auc_filtered is not None and not Path(p2auc_filtered).exists():
-            raise FileNotFoundError("Invalid path to filtered AUC matrices file (p2auc_filtered). \n " \
-                                     "Provide a valid path or run `SimiCPipeline.calculate_auc(use_filtered = True)`.")
-        self.p2auc_filtered = Path(p2auc_filtered)
-        if p2figures is not None and not Path(p2figures).exists():
-            print("Could not find path to figures output directory (p2figures). Creting it.")
-            Path(p2figures).mkdir(parents=True, exist_ok=True)  
-        self.p2figures = Path(p2figures)
-        
-        print("\n" + "="*70 + "\n")
-        return self
     
     def load_results(self, result_type='Ws_filtered'):
         """

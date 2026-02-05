@@ -42,6 +42,7 @@ class SimiCVisualization(SimiCBase):
                  search: bool = True,
                  lambda1: Optional[float] = None,
                  lambda2: Optional[float] = None,
+                 p2assignment: Optional[Union[str, Path]] = None,
                  label_names: Optional[Dict[Union[int, str], str]] = None,
                  colors: Optional[Dict[Union[int, str], str]] = None,
                  adata: Optional[Union[Path, str, ad.AnnData]] = None):
@@ -54,6 +55,7 @@ class SimiCVisualization(SimiCBase):
             search: Whether to automatically search for simic output files in project directory / run_name based on lambda1 and lambda2
             lambda1: Lambda1 regularization parameter (optional)
             lambda2: Lambda2 regularization parameter (optional)
+            p2assignment: Path to cell label assignment file (optional)
             label_names: Dictionary mapping labels to custom names (optional)
             adata: AnnData object containing cell metadata (optional)
         
@@ -63,9 +65,9 @@ class SimiCVisualization(SimiCBase):
             viz = SimiCVisualization(
                 project_dir="./SimiCExampleRun/KPB25L/Tumor",
                 run_name="experiment_tumor",
-                p2assignment="./SimiCExampleRun/KPB25L/annotation.csv",
                 lambda1=1e-1,
                 lambda2=1e-2,
+                p2assignment="./SimiCExampleRun/KPB25L/annotation.csv",
                 label_names={0: 'Control', 1: 'PD-L1', 2: 'DAC', 3: 'Combination'},
                 adata=adata_object
             )
@@ -87,6 +89,7 @@ class SimiCVisualization(SimiCBase):
         
         self.lambda1 = lambda1
         self.lambda2 = lambda2
+        self.p2assignment = p2assignment
         base_name = f"{self.run_name}_L1_{self.lambda1}_L2_{self.lambda2}"
         if search:
             if self.lambda1 is None or self.lambda2 is None:
@@ -96,11 +99,6 @@ class SimiCVisualization(SimiCBase):
             self.p2filtered_matrices = self.run_path / f"{base_name}_simic_matrices_filtered_BIC.pickle"
             self.p2auc_raw = self.run_path / f"{base_name}_wAUC_matrices.pickle"
             self.p2auc_filtered = self.run_path / f"{base_name}_wAUC_matrices_filtered_BIC.pickle"
-        else: 
-            self.p2simic_matrices = None
-            self.p2filtered_matrices = None
-            self.p2auc_raw = None
-            self.p2auc_filtered = None
 
        # Store AnnData object if provided (for UMAP visualziations)
         if adata is not None:
@@ -112,9 +110,11 @@ class SimiCVisualization(SimiCBase):
         # Label names mapping
         if label_names is not None:
             if colors is not None:
-                self.set_label_names(label_names, colors)
+                self.set_label_names(p2assignment= self.p2assignment,
+                                     label_names= label_names, colors = colors)
             else:   
-                self.set_label_names(label_names)
+                self.set_label_names(p2assignment= self.p2assignment,
+                                     label_names= label_names)
         else:   
             self.label_names = {}
             self.colors = {}
@@ -153,9 +153,10 @@ class SimiCVisualization(SimiCBase):
             col_dict = {0: 'blue', 1: 'orange', 2: 'green', 3: 'purple'}
             viz.set_label_names(label_names=lab_dict, colors=col_dict)
         """
-        if not p2assignment:
+        if p2assignment is None:
             raise ValueError("Path to assignment file (p2assignment) must be provided.")
-        self.p2assignment = Path(p2assignment)
+        if p2assignment is not None:
+            self.p2assignment = Path(p2assignment)
         if not self.p2assignment.exists():
             raise FileNotFoundError(f"Assignment file not found: {self.p2assignment}")
         self.label_names = {int(k): str(v) for k, v in label_names.items()}
@@ -183,293 +184,101 @@ class SimiCVisualization(SimiCBase):
 
     # Plotting functions
 
-    def plot_r2_distribution(self, labels: Optional[List[Union[int, str]]] = None, 
-                            threshold: float = 0.7,
-                            save: bool = True,
-                            filename: Optional[str] = None):
+    def plot_r2_distribution(
+        self,
+        labels: Optional[List[Union[int, str]]] = None,
+        threshold: float = 0.7,
+        save: bool = True,
+        grid_layout: Optional[tuple] = None,
+        filename: Optional[str] = None
+    ):
         """
         Plot R² distribution histograms for target genes.
-        
+
         Args:
             labels: List of phenotype labels to plot (default: all)
             threshold: R² threshold line to display
             save: Whether to save the figure
+            grid_layout: Tuple (n_rows, n_cols) for subplot arrangement
             filename: Custom filename for saved figure
         """
+
         print("\n" + "="*70)
         print("PLOTTING R² DISTRIBUTIONS")
         print("="*70 + "\n")
-        
+
         # Load results
-        results = self.load_results('Ws_filtered')
-        adj_r2 = results['adjusted_r_squared']
-        
+        results = self.load_results("Ws_filtered")
+        adj_r2 = results["adjusted_r_squared"]
+
         if labels is None:
             labels = list(adj_r2.keys())
-        
         n_labels = len(labels)
-        fig, axes = plt.subplots(1, n_labels, figsize=(6*n_labels, 5))
-        if n_labels == 1:
+
+        if grid_layout is not None:
+            n_rows, n_cols = grid_layout
+        else:
+            n_rows, n_cols = n_labels, 1  # default vertical layout
+
+        fig, axes = plt.subplots(
+            n_rows,
+            n_cols,
+            figsize=(6 * n_cols, 5 * n_rows)
+        )
+
+        # Always flatten axes into 1D list for easy indexing
+        if isinstance(axes, np.ndarray):
+            axes = axes.flatten()
+        else:
             axes = [axes]
-        
+        # Plot each label
         for idx, label in enumerate(labels):
+            # Data to plot
             r2_values = adj_r2[label]
             selected = np.sum(r2_values > threshold)
-            mean_r2 = np.mean(r2_values[r2_values > threshold])
-            
+            mean_r2 = np.mean(r2_values[r2_values > threshold]) if selected > 0 else 0
             label_name = self._get_label_name(label)
-            
-            axes[idx].hist(r2_values, bins=100, color='steelblue', alpha=0.7, edgecolor='black')
-            axes[idx].axvline(threshold, color='red', linestyle='--', linewidth=2, label=f'Threshold={threshold}')
-            axes[idx].set_xlabel('Adjusted R²', fontsize=12)
-            axes[idx].set_ylabel('Frequency', fontsize=12)
-            axes[idx].set_title(f'{label_name}\nTargets selected: {selected}, Mean R²: {mean_r2:.3f}', 
-                               fontsize=12)
-            axes[idx].legend()
-            axes[idx].grid(alpha=0.3)
-        
+            # Figure
+            ax = axes[idx]
+
+            ax.hist(
+                r2_values,
+                bins=100,
+                alpha=0.7,
+                edgecolor="black"
+            )
+
+            ax.axvline(
+                threshold,
+                color="red",
+                linestyle="--",
+                linewidth=2,
+                label=f"Threshold={threshold}"
+            )
+            ax.set_xlabel("Adjusted R²", fontsize=12)
+            ax.set_ylabel("Frequency", fontsize=12)
+            ax.set_title(
+                f"{label_name}\nTargets selected: {selected}, Mean R²: {mean_r2:.3f}",
+                fontsize=12
+            )
+            ax.legend()
+            ax.grid(alpha=0.3)
+
+        # Hide unused axes if grid is larger than needed
+        for j in range(n_labels, len(axes)):
+            axes[j].set_visible(False)
+
         plt.tight_layout()
-        
         if save:
-            fname = filename or f"{self.run_name}_R2_distribution.pdf"
-            plt.savefig(self.figures_path / fname, bbox_inches='tight', dpi=300)
-            print(f"✓ Saved to {self.figures_path / fname}")
-        
+            fname = filename or "r2_distribution.pdf"
+            pdf_path = self.figures_path / fname
+            plt.savefig(pdf_path, dpi=300)
+            plt.show()
+            plt.close(fig)
+            return fig
+
+        plt.show()
         return fig
-
-    # def plot_tf_weights(self, tf_names: Union[str, List[str]],
-    #                    labels: Optional[List[Union[int, str]]] = None,
-    #                    top_n_targets: int = 50,
-    #                    r2_threshold: float = 0.7,
-    #                    grid_layout: Optional[tuple] = (4, 1),
-    #                    save: bool = True,
-    #                    filename: Optional[str] = None):
-    #     """
-    #     Plot weight barplots for specific transcription factors.
-        
-    #     Args:
-    #         tf_names: TF name(s) to plot (single string or list)
-    #         labels: Phenotype labels to include (default: all)
-    #         r2_threshold: Minimum adjusted R² threshold for target inclusion
-    #         top_n_targets: Number of top targets to display based on largest absolute mean across labels.
-    #         grid_layout: Tuple (rows, cols) for subplot grid per page. Default (4,1) = 4 plots per page.
-    #                     Set to None to put ALL plots on a single page (one column, N rows).
-    #         save: Whether to save the figure
-    #         filename: Custom filename for saved figure
-    #     """
-    #     print("\n" + "="*70)
-    #     print(f"PLOTTING TF WEIGHT BARPLOTS")
-    #     print("="*70 + "\n")
-        
-    #     if isinstance(tf_names, str):
-    #         tf_names = [tf_names]
-        
-    #     # Load results
-    #     try:
-    #         results = self.load_results('Ws_filtered')
-    #     except FileNotFoundError:
-    #         print("Error: Filtered weights not found!")
-    #         return None
-        
-    #     weight_dic = results['weight_dic']
-    #     tf_ids = results['TF_ids']
-    #     target_ids = results['query_targets']
-        
-    #     if labels is None:
-    #         labels = list(weight_dic.keys())
-        
-    #     # Get unselected targets per label
-    #     adj_r2 = results['adjusted_r_squared']
-    #     unselected_targets = {}
-    #     for label in labels:
-    #         unselected_targets[label] = [target_ids[i] for i, r2 in enumerate(adj_r2[label]) if r2 < r2_threshold]
-        
-    #     # Filter valid TF names
-    #     if tf_names is not None:
-    #         valid_tf_names = [tf for tf in tf_names if tf in tf_ids]
-    #         if not valid_tf_names:
-    #             print(f"Error: None of the specified TFs found in results: {tf_names}")
-    #             return None
-    #         mute = False
-    #     else:
-    #         # Plot all TFs sorted alphabetically
-    #         valid_tf_names = sorted(tf_ids)
-    #         mute = True
-    #     n_tfs = len(valid_tf_names)
-
-    #     print(f"Plotting {n_tfs} TFs...")
-        
-    #     # Import PdfPages for multi-page output
-    #     from matplotlib.backends.backend_pdf import PdfPages
-        
-    #     # Determine single-page vs multi-page mode
-    #     if grid_layout is None:
-    #         # SINGLE PAGE MODE: all plots on one page (N rows x 1 col)
-    #         single_page_mode = True
-    #         grid_rows = n_tfs
-    #         grid_cols = 1
-    #         plots_per_page = n_tfs
-    #         print(f"Single page mode: {grid_rows} rows x {grid_cols} col (all {n_tfs} TFs on one page)")
-    #     else:
-    #         # MULTI-PAGE MODE: specified grid per page
-    #         single_page_mode = False
-    #         grid_rows, grid_cols = grid_layout
-    #         plots_per_page = grid_rows * grid_cols
-    #         n_pages = (n_tfs + plots_per_page - 1) // plots_per_page
-    #         print(f"Multi-page mode: {grid_rows} rows x {grid_cols} cols per page ({n_pages} pages)")
-        
-    #     # Prepare PDF path
-    #     if save:
-    #         fname = filename or f"{self.run_name}_TF_weights.pdf"
-    #         pdf_path = self.figures_path / fname
-    #         if not single_page_mode:
-    #             pdf_pages = PdfPages(pdf_path)
-    #         else:
-    #             pdf_pages = None
-    #     else:
-    #         pdf_pages = None
-    #         pdf_path = None
-        
-    #     # Process TFs in batches (pages)
-    #     default_colors = ["steelblue", "orange", "green", "purple", "brown"]
-        
-    #     all_figs = []
-    #     if mute:
-    #         print(f"Generating all transcription factor plots ...")
-    #     for page_idx, page_start in enumerate(range(0, n_tfs, plots_per_page)):
-    #         page_tfs = valid_tf_names[page_start:page_start + plots_per_page]
-            
-    #         # Calculate figure size
-    #         if single_page_mode:
-    #             # Single page: scale height with number of TFs
-    #             fig_width = 16
-    #             fig_height = max(5, 5 * len(page_tfs))
-    #         else:
-    #             # Multi-page: fixed size per page based on grid
-    #             fig_width = 16 if grid_cols >= 2 else 16
-    #             fig_height = 5 * grid_rows
-            
-    #         # Create figure for this page
-    #         if single_page_mode:
-    #             current_rows = len(page_tfs)
-    #             current_cols = 1
-    #         else:
-    #             current_rows = grid_rows
-    #             current_cols = grid_cols
-            
-    #         fig, axes = plt.subplots(current_rows, current_cols, figsize=(fig_width, fig_height))
-            
-    #         # Flatten axes for easier iteration
-    #         if current_rows == 1 and current_cols == 1:
-    #             axes = [axes]
-    #         else:
-    #             axes = np.array(axes).flatten()
-        
-    #         # Plot each TF in this page
-    #         for plot_idx, tf_name in enumerate(page_tfs):
-    #             if not mute:
-    #                 print(f"  [{page_idx + 1}] Processing {tf_name}...")
-                
-    #             # Get TF index
-    #             tf_index = tf_ids.index(tf_name)
-                
-    #             # Collect weights for all labels
-    #             plot_data = []
-    #             for label in labels:
-    #                 try:
-    #                     weights = weight_dic[label][tf_index, :]
-    #                     for i, target in enumerate(target_ids):
-    #                         if target not in unselected_targets[label] and weights[i] != 0:
-    #                             plot_data.append({
-    #                                 'target': target,
-    #                                 'weight': weights[i],
-    #                                 'label': str(label),
-    #                                 'label_name': self._get_label_name(label),
-    #                                 'abs_weight': abs(weights[i])
-    #                             })
-    #                 except Exception as e:
-    #                     print(f"    Error processing label {label}: {e}")
-    #                     continue
-                
-    #             df = pd.DataFrame(plot_data)
-    #             ax = axes[plot_idx]
-                
-    #             if df.empty:
-    #                 print(f"    No non-zero weights found for {tf_name} with r2 > {r2_threshold}, skipping plot.")
-    #                 ax.text(0.5, 0.5, f'No non-zero weights\nwith r2 > {r2_threshold}\nfor {tf_name}', 
-    #                        ha='center', va='center', transform=ax.transAxes, fontsize=12)
-    #                 ax.set_title(f'TF: {tf_name}', fontsize=14, fontweight='bold')
-    #                 continue
-                
-    #             # Get top targets by absolute mean weight
-    #             top_targets = df.groupby('target')['abs_weight'].mean().nlargest(top_n_targets).index
-    #             df_filtered = df[df['target'].isin(top_targets)]
-                
-    #             # Order targets by max absolute weight
-    #             target_order = df_filtered.groupby('target')['abs_weight'].max().sort_values(ascending=False).index
-                
-    #             # Plot
-    #             x_pos = np.arange(len(target_order))
-    #             bar_width = 0.8 / len(labels)
-                
-    #             for label_idx, label in enumerate(labels):
-    #                 label_data = df_filtered[df_filtered['label'] == str(label)]
-    #                 weights_ordered = [label_data[label_data['target'] == t]['weight'].values[0] 
-    #                                   if t in label_data['target'].values else 0 
-    #                                   for t in target_order]
-                    
-    #                 label_name = self._get_label_name(label)
-                    
-    #                 # Use custom color if available, otherwise use default
-    #                 if int(label) in self.colors:
-    #                     bar_color = self.colors[int(label)]
-    #                 else:
-    #                     bar_color = default_colors[label_idx % len(default_colors)]
-                    
-    #                 ax.bar(x_pos + label_idx * bar_width, weights_ordered, 
-    #                       bar_width, label=label_name, 
-    #                       color=bar_color, edgecolor='black', linewidth=0.5)
-                
-    #             ax.set_xlabel('Target Genes', fontsize=10)
-    #             ax.set_ylabel('Weight', fontsize=10)
-    #             ax.set_title(f'TF: {tf_name}', fontsize=14, fontweight='bold')
-    #             ax.set_xticks(x_pos + bar_width * (len(labels)-1) / 2)
-    #             ax.set_xticklabels(target_order, rotation=45, ha='right', fontsize=7)
-    #             ax.legend(loc='best')
-    #             ax.grid(axis='y', alpha=0.3)
-    #             ax.axhline(0, color='black', linewidth=0.8)
-            
-    #         # Hide unused subplots on last page (only relevant for multi-page mode)
-    #         if not single_page_mode:
-    #             for idx in range(len(page_tfs), len(axes)):
-    #                 axes[idx].axis('off')
-            
-    #         plt.tight_layout()
-            
-    #         # Save page to PDF
-    #         if save:
-    #             if single_page_mode:
-    #                 # Single page: save directly to file
-    #                 plt.savefig(pdf_path, bbox_inches='tight', dpi=300)
-    #                 print(f"\n✓ Saved {n_tfs} TFs to {pdf_path}")
-    #                 plt.close(fig)
-    #             elif pdf_pages is not None:
-    #                 # Multi-page: add to PDF
-    #                 pdf_pages.savefig(fig, bbox_inches='tight')
-    #                 plt.close(fig)
-    #         else:
-    #             all_figs.append(fig)
-    #             plt.show()
-        
-    #     # Close PDF file (multi-page mode only)
-    #     if save and pdf_pages is not None:
-    #         pdf_pages.close()
-    #         print(f"\n✓ Saved {n_tfs} TFs to {pdf_path}")
-        
-    #     # Return figure(s) if not saving
-    #     if not save:
-    #         return all_figs[0] if len(all_figs) == 1 else all_figs
-    #     return None
     
     def _prepare_weight_plot_data(self, gene_names: Union[str, List[str], None],
                                gene_type: str,  # 'tf' or 'target'
@@ -778,9 +587,13 @@ class SimiCVisualization(SimiCBase):
                 if single_page_mode:
                     plt.savefig(pdf_path, bbox_inches='tight', dpi=300)
                     print(f"\n✓ Saved {n_genes} {gene_type}s to {pdf_path}")
+                    plt.show()
                     plt.close(fig)
                 elif pdf_pages is not None:
                     pdf_pages.savefig(fig, bbox_inches='tight')
+                    if page_idx < 2:
+                        print("Showing first 2 pages preview...")
+                        plt.show()
                     plt.close(fig)
             else:
                 all_figs.append(fig)
@@ -797,7 +610,7 @@ class SimiCVisualization(SimiCBase):
                         labels: Optional[List[Union[int, str]]] = None,
                         top_n_targets: int = 50,
                         r2_threshold: float = 0.7,
-                        grid_layout: Optional[tuple] = (4, 1),
+                        grid_layout: Optional[tuple] = None,
                         save: bool = True,
                         filename: Optional[str] = None):
         """Plot weight barplots for specific transcription factors."""
@@ -1113,7 +926,7 @@ class SimiCVisualization(SimiCBase):
                 
                 ax = axes[plot_idx]
                 plotted_any = False
-                rug = []
+                rug_list = []
                 for label_idx, label in enumerate(labels):
                     try:
                         auc_subset = self.subset_label_specific_auc('auc_filtered', label)
@@ -1124,7 +937,7 @@ class SimiCVisualization(SimiCBase):
                             continue
                         
                         values = auc_subset[tf_name].dropna()
-                        rug.extend(values.tolist())
+                        rug_list.extend(values.tolist())
                         # Check if we have enough valid data points
                         if len(values) < 2:
                             if not mute:
@@ -1205,7 +1018,7 @@ class SimiCVisualization(SimiCBase):
                     yticks = ax.get_yticks()
                     tick_spacing = yticks[1] - yticks[0]
                     rug_length = 0.2 * tick_spacing
-                    ax.eventplot(rug,
+                    ax.eventplot(rug_list,
                                 orientation="horizontal",
                                 colors='tab:gray',
                                 linewidths=1,
@@ -1225,6 +1038,9 @@ class SimiCVisualization(SimiCBase):
                     # Single page: save directly to file
                     plt.savefig(pdf_path, bbox_inches='tight', dpi=300)
                     print(f"\n✓ Saved {n_tfs} TFs to {pdf_path}")
+                    if page_idx < 2:
+                        print("Showing first 2 pages preview...")
+                        plt.show()
                     plt.close(fig)
                 elif pdf_pages is not None:
                     # Multi-page: add to PDF
@@ -1243,196 +1059,6 @@ class SimiCVisualization(SimiCBase):
         if not save:
             return all_figs[0] if len(all_figs) == 1 else all_figs
         return None
-    # def plot_auc_distributions(self, tf_names: Union[str, List[str]],
-    #                           labels: Optional[List[Union[int, str]]] = None,
-    #                           fill: bool = True,
-    #                           alpha: float = 0.5,
-    #                           bw_adjust: Union[str, float] = "scott",
-    #                           save: bool = True,
-    #                           filename: Optional[str] = None):
-    #     """
-    #     Plot AUC density distributions for specific TFs across phenotypes.
-        
-    #     Args:
-    #         tf_names: TF name(s) to plot
-    #         labels: Phenotype labels to compare
-    #         fill: Whether to fill the density curves (default: True)
-    #         alpha: Transparency level for filled curves (0-1, default: 0.6)
-    #         bw_adjust:  Bandwidth adjustment for density smoothness (default: 0.5)
-    #                   Can be 'scott', 'silverman', or a float value
-    #                   Lower values (e.g., 0.2-0.5) = less smooth, more detail
-    #                   Higher values (e.g., 1.0-2.0) = more smooth
-    #         save: Whether to save the figure
-    #         filename: Custom filename for saved figure
-    #     """
-    #     print("\n" + "="*70)
-    #     print(f"PLOTTING AUC DISTRIBUTIONS")
-    #     print("="*70 + "\n")
-        
-    #     if isinstance(tf_names, str):
-    #         tf_names = [tf_names]
-        
-    #     # Load AUC results
-    #     try:
-    #         auc_data = self.load_results('auc_filtered')
-    #     except FileNotFoundError:
-    #         print("Error: AUC filtered results not found!")
-    #         return None
-        
-    #     if labels is None:
-    #         labels = list(auc_data.keys())
-        
-    #     # Calculate dissimilarity scores
-    #     try:
-    #         dissim_scores = self.calculate_dissimilarity(select_labels=labels, verbose=False)
-    #     except Exception as e:
-    #         print(f"Warning: Could not calculate dissimilarity scores: {e}")
-    #         dissim_scores = pd.DataFrame()
-        
-    #     # Filter out TFs that have no data
-    #     valid_tf_names = []
-    #     for tf_name in tf_names:
-    #         has_data = False
-    #         for label in labels:
-    #             try:
-    #                 auc_subset = self.subset_label_specific_auc('auc_filtered', label)
-    #                 if tf_name in auc_subset.columns:
-    #                     values = auc_subset[tf_name].dropna()
-    #                     if len(values) > 1:  # Need at least 2 points for density
-    #                         has_data = True
-    #                         break
-    #             except Exception:
-    #                 continue
-            
-    #         if has_data:
-    #             valid_tf_names.append(tf_name)
-    #         else:
-    #             print(f"Warning: Skipping {tf_name} - insufficient data for plotting")
-        
-    #     if not valid_tf_names:
-    #         print("Error: No valid TFs to plot!")
-    #         return None
-        
-    #     n_tfs = len(valid_tf_names)
-    #     n_cols = 2
-    #     n_rows = (n_tfs + 1) // 2
-        
-    #     fig, axes = plt.subplots(n_rows, n_cols, figsize=(14, 5*n_rows))
-    #     axes = axes.flatten() if n_tfs > 1 else [axes]
-        
-    #     default_colors = ["steelblue", "orange", "green", "purple", "brown"]
-        
-    #     for tf_idx, tf_name in enumerate(valid_tf_names):
-    #         print(f"Processing {tf_name}...")
-            
-    #         ax = axes[tf_idx]
-    #         plotted_any = False
-            
-    #         for label_idx, label in enumerate(labels):
-    #             try:
-    #                 auc_subset = self.subset_label_specific_auc('auc_filtered', label)
-                    
-    #                 if tf_name not in auc_subset.columns:
-    #                     print(f"  Warning: {tf_name} not found in label {label}")
-    #                     continue
-                    
-    #                 values = auc_subset[tf_name].dropna()
-                    
-    #                 # Check if we have enough valid data points
-    #                 if len(values) < 2:
-    #                     print(f"  Warning: Insufficient data for {tf_name} in label {label} (n={len(values)})")
-    #                     continue
-                    
-    #                 # Check if all values are the same (would cause density plot to fail)
-    #                 if values.std() == 0:
-    #                     print(f"  Warning: No variance in {tf_name} for label {label}, plotting as vertical line")
-    #                     label_name = self._get_label_name(label)
-                        
-    #                     # Use custom color if available, otherwise use default
-    #                     if int(label) in self.colors:
-    #                         color = self.colors[int(label)]
-    #                     else:
-    #                         color = default_colors[label_idx % len(default_colors)]
-                        
-    #                     ax.axvline(values.iloc[0], color=color, 
-    #                               linestyle='--', linewidth=2, label=label_name, alpha=alpha)
-    #                     plotted_any = True
-    #                     continue
-                    
-    #                 label_name = self._get_label_name(label)
-                    
-    #                 # Use custom color if available, otherwise use default
-    #                 if int(label) in self.colors:
-    #                     color = self.colors[int(label)]
-    #                 else:
-    #                     color = default_colors[label_idx % len(default_colors)]
-                    
-    #                 # Plot density with optional fill and bandwidth adjustment
-    #                 try:
-    #                     if fill:
-    #                         values.plot.density(ax=ax, label=label_name, 
-    #                                            color=color, alpha=alpha, linewidth=2,
-    #                                            bw_method=bw_adjust)
-    #                         # Fill under the curve
-    #                         line = ax.get_lines()[-1]
-    #                         x_data = line.get_xdata()
-    #                         y_data = line.get_ydata()
-    #                         ax.fill_between(x_data, y_data, alpha=alpha, color=color)
-    #                     else:
-    #                         values.plot.density(ax=ax, label=label_name, 
-    #                                            color=color, alpha=1.0, linewidth=2,
-    #                                            bw_method=bw_adjust)
-    #                     plotted_any = True
-    #                 except Exception as plot_error:
-    #                     print(f"  Warning: Could not plot density for {tf_name}, label {label}: {plot_error}")
-    #                     # Try histogram as fallback
-    #                     try:
-    #                         ax.hist(values, bins=20, density=True, alpha=alpha, 
-    #                                color=color, label=label_name, 
-    #                                edgecolor='black')
-    #                         plotted_any = True
-    #                     except Exception:
-    #                         print(f"  Error: Could not plot histogram either")
-    #                         continue
-                
-    #             except Exception as e:
-    #                 print(f"  Error processing label {label}: {e}")
-    #                 continue
-            
-    #         if not plotted_any:
-    #             ax.text(0.5, 0.5, f'No data available\nfor {tf_name}', 
-    #                    ha='center', va='center', transform=ax.transAxes, fontsize=12)
-    #             ax.set_xlim(0, 1)
-    #         else:
-    #             # Add dissimilarity score to title
-    #             if tf_name in dissim_scores.index:
-    #                 dissim_score = dissim_scores.loc[tf_name, 'MinMax_score']
-    #                 ax.set_title(f'{tf_name}\nDissimilarity: {dissim_score:.4f}', 
-    #                            fontsize=12, fontweight='bold')
-    #             else:
-    #                 ax.set_title(f'{tf_name}', fontsize=12, fontweight='bold')
-                
-    #             ax.set_xlabel('AUC Score', fontsize=10)
-    #             ax.set_ylabel('Density', fontsize=10)
-    #             ax.legend(loc='best')
-    #             ax.grid(alpha=0.3)
-    #             ax.set_xlim(0, 1)
-        
-    #     # Hide extra subplots
-    #     for idx in range(n_tfs, len(axes)):
-    #         axes[idx].axis('off')
-        
-    #     plt.tight_layout()
-        
-    #     if save:
-    #         fname = filename or f"{self.run_name}_AUC_distributions.pdf"
-    #         try:
-    #             plt.savefig(self.figures_path / fname, bbox_inches='tight', dpi=300)
-    #             print(f"✓ Saved to {self.figures_path / fname}")
-    #         except Exception as e:
-    #             print(f"Error saving figure: {e}")
-        
-    #     return fig
 
     def _prepare_auc_data(self, labels: Optional[List[Union[int, str]]] = None):
         """
@@ -1707,6 +1333,73 @@ class SimiCVisualization(SimiCBase):
         
         return fig
 
+    def plot_dissimilarity_heatmap(self, labels: Optional[List[Union[int, str]]] = None,
+                                   top_n_tfs: Optional[int] = None,
+                                   save: bool = True,
+                                   filename: Optional[str] = None):
+        """
+        Plot heatmap of regulatory dissimilarity scores.
+        
+        Args:
+            labels: Phenotype labels to compare
+            top_n_tfs: Number of top TFs to display (by dissimilarity)
+            save: Whether to save the figure
+            filename: Custom filename for saved figure
+        """
+        print("\n" + "="*70)
+        print(f"PLOTTING DISSIMILARITY HEATMAP")
+        print("="*70 + "\n")
+        
+        # Calculate dissimilarity scores
+        dissim_df = self.calculate_dissimilarity(select_labels=labels)
+        
+        if top_n_tfs:
+            dissim_df = dissim_df.head(top_n_tfs)
+        
+        # Create heatmap using matplotlib
+        fig, ax = plt.subplots(figsize=(8, max(6, len(dissim_df) * 0.3)))
+        
+        # Create the heatmap
+        im = ax.imshow(dissim_df.values, cmap='viridis', aspect='auto')
+        
+        # Set ticks and labels
+        ax.set_xticks(np.arange(len(dissim_df.columns)))
+        ax.set_yticks(np.arange(len(dissim_df.index)))
+        ax.set_xticklabels(dissim_df.columns, fontsize=10)
+        ax.set_yticklabels(dissim_df.index, fontsize=8)
+        
+        # Rotate the x-axis labels
+        plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+        
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label('Dissimilarity Score', rotation=270, labelpad=20, fontsize=10)
+        
+        # Annotate cells with values
+        for i in range(len(dissim_df.index)):
+            for j in range(len(dissim_df.columns)):
+                text = ax.text(j, i, f'{dissim_df.values[i, j]:.4f}',
+                             ha="center", va="center", color="white", fontsize=6)
+        
+        # Add title and labels
+        ax.set_title('Regulatory Dissimilarity Scores', fontsize=14, fontweight='bold', pad=20)
+        ax.set_ylabel('Transcription Factors', fontsize=12)
+        
+        # Add gridlines
+        ax.set_xticks(np.arange(len(dissim_df.columns)) - 0.5, minor=True)
+        ax.set_yticks(np.arange(len(dissim_df.index)) - 0.5, minor=True)
+        ax.grid(which="minor", color="white", linestyle='-', linewidth=0.5)
+        ax.tick_params(which="minor", size=0)
+        
+        plt.tight_layout()
+        
+        if save:
+            fname = filename or f"{self.run_name}_dissimilarity_heatmap.pdf"
+            plt.savefig(self.figures_path / fname, bbox_inches='tight', dpi=300)
+            print(f"✓ Saved to {self.figures_path / fname}")
+        
+        return fig
+    
 # Export functions from SimiCPipeline
 SimiCVisualization.calculate_dissimilarity = SimiCPipeline.calculate_dissimilarity
 SimiCVisualization.subset_label_specific_auc = SimiCPipeline.subset_label_specific_auc

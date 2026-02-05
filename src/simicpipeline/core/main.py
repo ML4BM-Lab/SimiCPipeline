@@ -223,13 +223,14 @@ class SimiCPipeline(SimiCBase):
         print("="*50 + "\n")
         
         ts = time.time()
+        # To ensure reproducibility
         np.random.seed(123)
-        
         simicLASSO_op(
             p2df=str(self.p2df),
             p2tf=str(self.p2tf),
             p2assignment=str(self.p2assignment) if self.p2assignment is not None else None,
             p2saved_file=str(self.p2simic_matrices),
+            df_with_label=self.df_with_label, 
             similarity=self.similarity,
             lambda1=self.lambda1,
             lambda2=self.lambda2,
@@ -238,7 +239,6 @@ class SimiCPipeline(SimiCBase):
             k_cv=self.k_cross_val,
             max_rcd_iter_cv=self.max_rcd_iter_cv,
             num_rep=self.num_rep,
-            df_with_label=self.df_with_label, 
             list_of_l1=self.list_of_l1,
             list_of_l2=self.list_of_l2
         )
@@ -447,7 +447,7 @@ class SimiCPipeline(SimiCBase):
         auc_subset_all = pd.concat(auc_subset_list, axis=0)
         
         out_file= p2auc_file.with_name(p2auc_file.stem + "_collected.csv")
-        auc_subset_all.to_csv("all_labels_auc_filtered.csv")
+        auc_subset_all.to_csv(out_file)
         print(f"✓ Collected AUC for all labels saved to: {out_file.with_name(out_file.stem + '_collected.csv')}")
 # Wrapper function to run the complete pipeline
     def run_pipeline(self,

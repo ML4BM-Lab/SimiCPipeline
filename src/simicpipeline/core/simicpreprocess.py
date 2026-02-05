@@ -465,17 +465,17 @@ class ExperimentSetup(SimiCBase):
         """
         # Build paths in inputFiles directory
         matrix_filename = Path(matrix_filename)
-        if matrix_filename.suffix != '.pickle':
-            matrix_filename = matrix_filename.with_suffix('.pickle')
-            print(f"\nWarning: Matrix filename must have a .pickle suffix. Changing to {matrix_filename}")
+        if matrix_filename.suffix not in ['.pickle', '.csv']:
+            matrix_filename = matrix_filename.with_suffix('.csv')
+            print(f"\nWarning: Matrix filename must have a .pickle or csv suffix. Changing to {matrix_filename}")
         matrix_path = self.input_files_dir / matrix_filename
         if matrix_path.exists():
             print(f"\nWarning: Output file {matrix_path} already exists and will be overwritten.")
         
         tf_filename = Path(tf_filename)
-        if tf_filename.suffix != '.pickle':
-            tf_filename = tf_filename.with_suffix('.pickle')
-            print(f"\nWarning: TF filename must have a .pickle suffix. Changing to {tf_filename}")
+        if tf_filename.suffix not in ['.pickle', '.csv']:
+            tf_filename = tf_filename.with_suffix('.csv')
+            print(f"\nWarning: TF filename must have a .pickle suffixor csv suffix. Changing to {tf_filename}")
         tf_path = self.input_files_dir / tf_filename
         
         # Generate df from run_data
@@ -495,9 +495,13 @@ class ExperimentSetup(SimiCBase):
             df = run_data
         
         # Save matrix in pickle format
-        with open(matrix_path, 'wb') as f:
-            pickle.dump(df, f)
+        if matrix_path.suffix == '.csv':
+            df.to_csv(matrix_path, index=True, header=True)
             print(f"Saved expression matrix to {matrix_path}")
+        else:
+            with open(matrix_path, 'wb') as f:
+                pickle.dump(df, f)
+                print(f"Saved expression matrix to {matrix_path}")
 
         # Save TF list
         # Check TFs found in final dataset
@@ -506,9 +510,13 @@ class ExperimentSetup(SimiCBase):
             raise ValueError("No TFs found in expression matrix from the provided TF list.")
         if tf_path.exists():
             print(f"\nWarning: Output file {tf_path} already exists and will be overwritten.")
-        with open(tf_path, 'wb') as f:
-            pickle.dump(data_tfs, f)
+        if tf_path.suffix == '.csv':
+            pd.DataFrame(data_tfs).to_csv(tf_path, index=False, header=False)
             print(f"Saved {len(data_tfs)} TFs to {tf_path}")
+        else: 
+            with open(tf_path, 'wb') as f:
+                pickle.dump(data_tfs, f)
+                print(f"Saved {len(data_tfs)} TFs to {tf_path}")
         
         if annotation and isinstance(run_data, ad.AnnData):
             if annotation in run_data.obs.columns:
