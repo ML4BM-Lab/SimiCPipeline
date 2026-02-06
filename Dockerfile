@@ -8,7 +8,7 @@ LABEL software="poetry / python3.10 / magic-impute / SimiCPipeline"
 LABEL software.version="Dec2025"
 LABEL about.summary="Docker image to run SimiCPipeline using poetry package manager"
 LABEL about.tags="Transcriptomics"
-LABEL about.maintainer="imarin.4@alumni.unav.es"
+LABEL about.maintainer="GitHUb: @ML4BM-Lab; @irenemaring"
 
 ################## BASE INSTALLATION ######################
 # Update/Install build dependencies
@@ -25,7 +25,7 @@ ENV PATH="/root/.local/bin:${PATH}"
 FROM poetry AS simic
 WORKDIR /home/
 
-RUN git clone https://github.com/irenemaring/SimiCPipeline.git \
+RUN git clone https://github.com/ML4BM-Lab/SimiCPipeline.git \
     && cd SimiCPipeline && \
     poetry install --with dev && \
     poetry run python -m pip install -e . && \

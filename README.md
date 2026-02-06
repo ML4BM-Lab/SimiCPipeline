@@ -29,7 +29,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Poetry will manage all the dependencies
 
 ```bash
-git clone https://github.com/irenemaring/SimiCPipeline.git
+git clone https://github.com/ML4BM-Lab/SimiCPipeline.git
 cd SimiCPipeline
 poetry install
 ```
@@ -53,11 +53,11 @@ Download the [Dockerfile](./Dockerfile) form this repo and build the image.
 *Note you can tag (*`-t`*) the image with any name*
 
 ```bash
-docker build -t irenemaring/simicpipeline:poetry .
+docker build -t ml4bm/simicpipeline:poetry .
 ```
 *To update your docker with the latest repo commit you can re-build with `--no-cache-filter simic`*
 ```
-docker build --no-cache-filter simic -t irenemaring/simicpipeline:poetry .
+docker build --no-cache-filter simic -t ml4bm/simicpipeline:poetry .
 ```
 
 #### 2. Run the Container
@@ -66,7 +66,7 @@ docker build --no-cache-filter simic -t irenemaring/simicpipeline:poetry .
 - `--cpuset-cpus` should be set in accordance to your local machine capabilities and the available cpus you want to assign to the docker container.
 
 ```bash
-docker run -dt -p 8888:8888 --cpuset-cpus=0-32 -v <path-to-host-directory>:/home/workdir --workdir=/home/workdir --name <your-container-name> irenemaring/simicpipeline:poetry
+docker run -dt -p 8888:8888 --cpuset-cpus=0-32 -v <path-to-host-directory>:/home/workdir --workdir=/home/workdir --name <your-container-name> ml4bm/simicpipeline:poetry
 ```
 
 #### 3. Access the Container in interactive mode
@@ -215,15 +215,16 @@ If you use SimiCPipeline in your research, please cite:
 
 ```bibtex
 @software{simicpipeline,
-  author = {Marín-Goñi, Irene},
-  title = {SimiCPipeline: A Python Package for SimiC Analysis},
+  author = {Marín-Goñi, Irene, ML4BM- Lab},
+  title = {SimiCPipeline: A Python Package for SimiC, a single-cell gene regulatory network inference framework.},
   year = {2025},
-  url = {https://github.com/irenemaring/SimiCPipeline}
+  url = {https://github.com/ML4BM-Lab/SimiCPipeline}
 }
 ```
 
 ## Contact
 
-Irene Marín-Goñi - imarin.4@alumni.unav.es
+Machine Learning 4 Biomedicine group - https://mikelhernaez.github.io/ - mhernaez at unav dot es
+Irene Marín-Goñi - imarindot 4 at alumni dot unav dot es
 
-Project Link: [https://github.com/irenemaring/SimiCPipeline](https://github.com/irenemaring/SimiCPipeline)
+Project Link: [https://github.com/ML4BM-Lab/SimiCPipeline](https://github.com/ML4BM-Lab/SimiCPipeline)
