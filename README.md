@@ -225,6 +225,7 @@ If you use SimiCPipeline in your research, please cite:
 ## Contact
 
 Machine Learning 4 Biomedicine group - https://mikelhernaez.github.io/ - mhernaez at unav dot es
+
 Irene Marín-Goñi - imarindot 4 at alumni dot unav dot es
 
 Project Link: [https://github.com/ML4BM-Lab/SimiCPipeline](https://github.com/ML4BM-Lab/SimiCPipeline)
