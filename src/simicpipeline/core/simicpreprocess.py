@@ -441,7 +441,7 @@ class ExperimentSetup(SimiCBase):
         
         print("Removing " + str(sum(TARGETs == 0)) + " targets with MAD = 0")  # remove TARGETs with MAD = 0
         TARGETs = TARGETs[TARGETs > 0]
-        TARGETs.sort_values(ascending=False, inplace=True)  # Sort the series in descending order
+        TARGETs.sort_values(ascending = False, inplace = True)  # Sort the series in descending order
         
         n_targets = min(n_targets, len(TARGETs))
         print(f"Selecting top {n_targets} targets based on MAD.")
@@ -453,7 +453,8 @@ class ExperimentSetup(SimiCBase):
                               run_data: Union[ad.AnnData, pd.DataFrame],
                               matrix_filename: str = 'expression_matrix.pickle',
                               tf_filename: str = 'TF_list.pickle',
-                              annotation: Optional[str] = None) -> None:
+                              annotation: Optional[str] = None,
+                              annotation_order: Optional[List[str]] = None) -> None:
         """
         Save matrix (cells x genes) and TF names to pickle files in inputFiles directory.
 
@@ -462,6 +463,9 @@ class ExperimentSetup(SimiCBase):
             matrix_filename: Filename for the expression matrix pickle format (saved in project_dir/inputFiles/)
             tf_filename: Filename for the TF names in pickle format (saved in project_dir/inputFiles/)
             annotation: Optional annotation column name in run_data.obs to save as txt file
+            annotation_order: Optional list defining the desired order of annotation categories 
+                              (e.g. ['control', 'treated']). The first element maps to 0, second to 1, etc.
+                              If None, pd.factorize default order is used.
         """
         # Build paths in inputFiles directory
         matrix_filename = Path(matrix_filename)
@@ -523,21 +527,78 @@ class ExperimentSetup(SimiCBase):
                 print("\n-------\n")
                 print(f"Annotation '{annotation}' found in obs columns!")
                 # Check annotation column is numeric
-                annot_series = run_data.obs[annotation]
+                annot_series = run_data.obs[annotation].copy()
                 if not pd.api.types.is_numeric_dtype(annot_series):
                     print("Warning: annotation is not numeric. Will convert from categorical to numeric.")
-                    annot_series = pd.Series(pd.factorize(annot_series)[0], index=annot_series.index)
-                try:
-                    import collections
-                    counter = collections.Counter(annot_series)
-                    print(f"\nAnnotation distribution: {dict(counter)}")
-                except:
-                    print(f"\nAnnotation values: {set(annot_series)}")
+                    if annotation_order is not None:
+                        # Validate that all observed categories are in annotation_order
+                        observed_categories = set(annot_series.unique())
+                        ordered_set = set(annotation_order)
+                        missing_from_order = observed_categories - ordered_set
+                        unused_in_order = ordered_set - observed_categories
+                        if missing_from_order:
+                                raise ValueError(f"The following annotation values are in the data but not in annotation_order: {missing_from_order}.\n"
+                                                "If only these annotation_order categories are needed, subset run_data accordingly before running `save_experiment_files`"
+                                                )
+                        if unused_in_order:
+                            raise ValueError(
+                                f"The following annotation_order values are not present in data: {unused_in_order}"
+                            )
+                        # Map categories to integers based on user-defined order
+                        category_to_int = {cat: idx for idx, cat in enumerate(annotation_order)}
+                        annot_numeric = annot_series.map(category_to_int)
+                        print(f"Annotation order applied: {dict(enumerate(annotation_order))}")
+                    else:
+                        codes, uniques = pd.factorize(annot_series)
+                        annot_numeric = pd.Series(codes, index=annot_series.index)
+                        category_to_int = {cat: idx for idx, cat in enumerate(uniques)}
+                        print(f"Annotation order (auto): {dict(enumerate(uniques))}")
+                    
+                    # Build a two-column DataFrame with category name and numeric label
+                    int_to_category = {v: k for k, v in category_to_int.items()}
+                    annot_df = pd.DataFrame({
+                        'category': annot_numeric.map(int_to_category),
+                        'label': annot_numeric
+                    }, index=annot_series.index)
+                else:
+                    # Already numeric — check for NaNs
+                    if annot_series.isna().any():
+                        n_na = annot_series.isna().sum()
+                        print(f"Warning: {n_na} NaN values found in numeric annotation column '{annotation}'. Dropping NaN rows.")
+                        annot_series = annot_series.dropna()
+                    # Convert to int if all values are whole numbers
+                    if (annot_series == annot_series.astype(int)).all():
+                        annot_series = annot_series.astype(int)
+                    
+                    if annotation_order is not None:
+                        # Map sorted unique numeric values to user-defined category names
+                        sorted_unique = sorted(annot_series.unique())
+                        if len(annotation_order) != len(sorted_unique):
+                            raise ValueError(
+                                f"annotation_order has {len(annotation_order)} entries but the numeric annotation "
+                                f"column has {len(sorted_unique)} unique values: {sorted_unique}. "
+                                f"They must match in length."
+                            )
+                        label_to_category = {val: cat for val, cat in zip(sorted_unique, annotation_order)}
+                        annot_df = pd.DataFrame({
+                            'category': annot_series.map(label_to_category),
+                            'label': annot_series
+                        }, index=annot_series.index)
+                        print(f"Annotation order applied to numeric labels: {label_to_category}")
+                    else:
+                        annot_df = pd.DataFrame({
+                            'category': annot_series.values,
+                            'label': annot_series.values
+                        }, index=annot_series.index)
+                
+                # Print annotation distribution
+                print(f"\nAnnotation distribution:\n{annot_df['label'].value_counts().sort_index().to_string()}")
+                
                 # Save annotation
-                annot_path = self.input_files_dir / f"{annotation}_annotation.txt"
+                annot_path = self.input_files_dir / f"{annotation}_annotation.csv"
                 if annot_path.exists():
                     print(f"\nWarning: Output file {annot_path} already exists and will be overwritten.")
-                annot_series.to_csv(annot_path, index=False, header=False)
+                annot_df.to_csv(annot_path, index=True, header=True)
                 print(f"Saved annotation to {annot_path}")
             else:
                 print(f"\nWarning: Annotation '{annotation}' not found in obs columns.")

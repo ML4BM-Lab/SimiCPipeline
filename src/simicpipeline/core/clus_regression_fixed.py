@@ -23,7 +23,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
 from scipy.linalg import eigh
 from simicpipeline.utils.io import write_pickle
-
+from simicpipeline.core.base import _load_assignment_file
 
 # Data extraction functions
 def extract_cluster_from_assignment(df_in, assignment):
@@ -333,6 +333,7 @@ def get_train_mat_in_k_fold(mat_dict, idx, k):
                 }
     return mat_dict_train, mat_dict_eval
 
+
 # Main function to be called
 def simicLASSO_op(*,  # Force all arguments to be keyword-only
         p2df: str,
@@ -361,7 +362,7 @@ def simicLASSO_op(*,  # Force all arguments to be keyword-only
             cell2:  x,     x,   , ..., x,   , type2
         p2tf (str): path to TF list file / path to list of all TFs.
         p2assignment (str): path to clustering order assignment file.
-                      a text file with each line corresponding to cell order.
+                      a text file with at least one column name 'label' and each item in the column corresponding to cell order.
         p2saved_file (str): path to save the output weight dictionary.
         df_with_label (bool): Whether the dataframe contains a label column with assignment labels.
         similarity (bool): Enables similarity constraint for Lipswitz constant (RCD process).
@@ -399,8 +400,7 @@ def simicLASSO_op(*,  # Force all arguments to be keyword-only
         df = original_df
     
     if p2assignment != None:
-        assignment_df = pd.read_csv(p2assignment, header = None)
-        assignment = assignment_df[0].values
+        assignment = _load_assignment_file(p2assignment)
 
     #### BEGIN of the regression part
     sys.stdout.flush()
@@ -447,17 +447,20 @@ def simicLASSO_op(*,  # Force all arguments to be keyword-only
         ### run cross_validation!!!!!! #############
         sys.stdout.flush()
         print("\n" + "-"*70)
-        print('Sart cross validation!!!')
+        print('Start cross validation!!!')
         print("-"*70 + "\n")
         print(f"Trying lambda1 = {list_of_l1} and lambda2 = {list_of_l2}")
         l1_opt, l2_opt, r2_opt = cross_validation(mat_dict_train, similarity, list_of_l1, list_of_l2, k_cv, max_rcd_iter_cv)
         sys.stdout.flush()
-        print("Criss Validation done! \n")
+        print("Cross Validation done! \n")
         print('Selected: lambda1 = {}, lambda2 = {}, opt R squared on eval {:.4f}'.format(l1_opt, l2_opt, r2_opt))
         print('-' * 70)
         sys.stdout.flush()
+        # We need to change the p2saved_file to match the new optimal lambda1 and lambda2
+        p2saved_file = p2saved_file.replace('_L1_'+ str(lambda1) +'_L2_' + str(lambda2),'_L1_{}_L2_{}'.format(l1_opt, l2_opt))
         lambda1 = l1_opt
         lambda2 = l2_opt
+        
         ############### end of cv ####################
 
     #### optimize using RCD
@@ -498,4 +501,9 @@ def simicLASSO_op(*,  # Force all arguments to be keyword-only
                      }
 
     write_pickle(dict_to_saved, p2saved_file)
+
+    if cross_val == True:
+        return lambda1, lambda2
+    else:
+        return None
 

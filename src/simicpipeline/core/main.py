@@ -225,23 +225,29 @@ class SimiCPipeline(SimiCBase):
         ts = time.time()
         # To ensure reproducibility
         np.random.seed(123)
-        simicLASSO_op(
-            p2df=str(self.p2df),
-            p2tf=str(self.p2tf),
-            p2assignment=str(self.p2assignment) if self.p2assignment is not None else None,
-            p2saved_file=str(self.p2simic_matrices),
-            df_with_label=self.df_with_label, 
-            similarity=self.similarity,
-            lambda1=self.lambda1,
-            lambda2=self.lambda2,
-            max_rcd_iter=self.max_rcd_iter,
-            cross_val=self.cross_val,
-            k_cv=self.k_cross_val,
-            max_rcd_iter_cv=self.max_rcd_iter_cv,
-            num_rep=self.num_rep,
-            list_of_l1=self.list_of_l1,
-            list_of_l2=self.list_of_l2
+        result = simicLASSO_op(
+            p2df = str(self.p2df),
+            p2tf = str(self.p2tf),
+            p2assignment = str(self.p2assignment) if self.p2assignment is not None else None,
+            p2saved_file = str(self.p2simic_matrices),
+            df_with_label = self.df_with_label, 
+            similarity = self.similarity,
+            lambda1 = self.lambda1,
+            lambda2 = self.lambda2,
+            max_rcd_iter = self.max_rcd_iter,
+            cross_val = self.cross_val,
+            k_cv = self.k_cross_val,
+            max_rcd_iter_cv = self.max_rcd_iter_cv,
+            num_rep = self.num_rep,
+            list_of_l1 = self.list_of_l1,
+            list_of_l2 = self.list_of_l2
         )
+        # Update lambdas if cross-validation was performed
+        if result is not None:
+            self.lambda1, self.lambda2 = result
+            print(f"Updated lambdas from cross-validation: L1={self.lambda1}, L2={self.lambda2}")
+            self.set_output_paths()  # Update file paths to match new lambdas
+        
         
         te = time.time()
         self.timing['simic_regression'] = te - ts
@@ -394,7 +400,7 @@ class SimiCPipeline(SimiCBase):
                       select_top_k_targets: int = None,
                       percent_of_target: float = 1, 
                       sort_by:str ='expression', 
-                      num_cores: int = 0):
+                      num_cores: int = 1):
         """
         Calculate AUC matrices.
 
@@ -410,7 +416,7 @@ class SimiCPipeline(SimiCBase):
         if sort_by not in ['expression', 'weight', 'adj_r2']:
             raise ValueError("sort_by must be one of 'expression', 'weight', or 'adj_r2'")
         
-        weight_file = self.p2filtered_matrices if use_filtered else self.p2simic_matrices
+        p2res = self.p2filtered_matrices if use_filtered else self.p2simic_matrices
         p2auc_file = self.p2auc_filtered if use_filtered else self.p2auc_raw
         
         file_type = "filtered" if use_filtered else "raw"
@@ -421,15 +427,15 @@ class SimiCPipeline(SimiCBase):
         
         ts = time.time()
         
-        processor = AUCProcessor(self.project_dir, self.p2df, str(weight_file))
+        processor = AUCProcessor(self.project_dir, self.p2df, p2res)
         processor.normalized_by_target_norm()
         processor.save_AUC_dict(
-            p2auc_file=str(p2auc_file),
-            adj_r2_threshold=adj_r2_threshold,
-            select_top_k_targets=select_top_k_targets,
-            percent_of_target=percent_of_target,
-            sort_by=sort_by,
-            num_cores=num_cores
+            p2auc_file = p2auc_file,
+            adj_r2_threshold = adj_r2_threshold,
+            select_top_k_targets = select_top_k_targets,
+            percent_of_target = percent_of_target,
+            sort_by = sort_by,
+            num_cores = num_cores
         )
         te = time.time()
         self.timing[f'auc_{file_type}'] = te - ts
@@ -446,10 +452,11 @@ class SimiCPipeline(SimiCBase):
             auc_subset_list.append(auc_subset)
         auc_subset_all = pd.concat(auc_subset_list, axis=0)
         
-        out_file= p2auc_file.with_name(p2auc_file.stem + "_collected.csv")
+        out_file = p2auc_file.with_name(p2auc_file.stem + "_collected.csv")
         auc_subset_all.to_csv(out_file)
-        print(f"✓ Collected AUC for all labels saved to: {out_file.with_name(out_file.stem + '_collected.csv')}")
-# Wrapper function to run the complete pipeline
+        print(f"✓ Collected AUC for all labels saved to: {out_file}")
+    
+    # Wrapper function to run the complete pipeline
     def run_pipeline(self,
                      skip_filtering=False,
                      calculate_raw_auc=False,
@@ -472,7 +479,7 @@ class SimiCPipeline(SimiCBase):
         total_start = time.time()
         
         print("\n" + "="*70)
-        print("STARTING SIMIC PIPELINE")
+        print("SIMIC PIPELINE")
         print("="*70)
         
         # Run regression
@@ -588,8 +595,9 @@ class SimiCPipeline(SimiCBase):
         tf_aucs_filtered = {}
         for label in auc_results.keys():
             # Subset AUC dataframe to only cells in this label
-            auc_subset = self.subset_label_specific_auc('auc_filtered',label)
+            auc_subset = self.subset_label_specific_auc('auc_filtered', label)
             tf_aucs_filtered[label] = auc_subset.loc[:, TF_name]            
+        
         if stacked:
             # concatenate all labels into a single DataFrame of one column and add label column
             aucs_df = pd.DataFrame()
@@ -597,7 +605,14 @@ class SimiCPipeline(SimiCBase):
                 label_df = pd.DataFrame(tf_aucs_filtered[label])
                 label_df['label'] = label
                 aucs_df = pd.concat([aucs_df, label_df], axis=0)
+            # Add "Category" column if it exists in the assignment file
+            if hasattr(self, 'p2assignment'):
+                assignment = pd.read_csv(self.p2assignment, index_col=0)
+                assignment.drop(columns=['label'], inplace=True, errors='ignore')
+                if 'category' in assignment.columns:
+                    aucs_df = pd.merge(aucs_df, assignment, how = "left", left_index=True, right_index=True)
             return aucs_df
+        
         return tf_aucs_filtered
 
 
@@ -649,6 +664,7 @@ class SimiCPipeline(SimiCBase):
             print(f"    - Avg non-zero TFs per target: {nonzero_per_target_filtered.mean():.2f}")
             print(f"  Reduction: {((sparsity_filtered - sparsity_raw) / (100 - sparsity_raw) * 100):.2f}% more sparse")
             print()
+ 
 
     def subset_label_specific_auc(self, result_type: str, label: int):
         """
@@ -660,12 +676,12 @@ class SimiCPipeline(SimiCBase):
             pd.DataFrame: AUC dataframe for the specified label
         """    
         auc_dic = self.load_results(result_type)
-        
+        from simicpipeline.core.base import _load_assignment_file
         auc_df = auc_dic[label]
-        # Load cell assignments to get which cells belong to which label
-        assignment_df = pd.read_csv(self.p2assignment, sep='\t', header=None, names=['label'])
+        # Load cell assignments using the helper that handles both formats
+        assignment = _load_assignment_file(self.p2assignment)
         # Get cells that belong to this label
-        cells_idx_in_label = assignment_df[assignment_df['label'] == int(label)].index.to_list()
+        cells_idx_in_label = np.where(assignment == int(label))[0].tolist()
         # Subset AUC dataframe to only cells in this label
         auc_subset = auc_df.iloc[cells_idx_in_label,]
         return auc_subset

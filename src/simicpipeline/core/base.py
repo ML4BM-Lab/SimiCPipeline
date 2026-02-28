@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Union, Optional
 from simicpipeline.utils.io import format_time, print_tree
 import pickle
+import numpy as np
+import pandas as pd
 
 class SimiCBase:
     """
@@ -176,3 +178,32 @@ class SimiCBase:
             except FileNotFoundError:
                 print(f"✗ {result_type}")
         print("\n" + "="*70)
+    
+def _load_assignment_file(p2assignment: Union[str, Path]) -> np.ndarray:
+    """
+    Load cell phenotype assignment from file.
+    
+    Supports two formats:
+        1. New format: CSV with header 'category,label' (two columns)
+        2. Legacy format: Single column of numeric labels, no header
+    
+    Args:
+        p2assignment: Path to assignment file
+        
+    Returns:
+        np.ndarray: Array of integer labels
+    """
+    p2assignment = Path(p2assignment)
+    # Try reading as CSV with header first
+    try:
+        df = pd.read_csv(p2assignment, sep=',', skipinitialspace=True)
+        # Strip whitespace from column names
+        df.columns = df.columns.str.strip()
+        if 'label' in df.columns and 'category' in df.columns:
+            # Strip whitespace from label values and convert to int
+            return pd.to_numeric(df['label'].astype(str).str.strip(), errors='coerce').dropna().astype(int).values
+    except Exception:
+        pass
+    # Fallback: legacy single-column format (no header)
+    df = pd.read_csv(p2assignment, header=None, sep='\t')
+    return df.iloc[:, 0].astype(int).values

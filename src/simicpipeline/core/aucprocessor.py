@@ -14,31 +14,31 @@ from simicpipeline.utils.io import write_pickle
 from simicpipeline.core import SimiCBase
 from typing import Optional, Union
 
-class BaseProcessor(SimiCBase):
-    """
-    Base class for SimiC processors.
-    Provides common functionality for file handling and data loading.
-    """
+# class BaseProcessor(SimiCBase):
+#     """
+#     Base class for SimiC processors.
+#     Provides common functionality for file handling and data loading.
+#     """
 
 
-    def __init__(self, p2df, p2res):
-        """
-        Initialize the base processor.
+#     def __init__(self, p2df, p2res):
+#         """
+#         Initialize the base processor.
         
-        Args:
-            p2df (str): Path to dataframe pickle file
-            p2res (str): Path to results pickle file
-        """
-        self.p2df = Path(p2df)
-        self.p2res = Path(p2res)
-        self.validate_files()
+#         Args:
+#             p2df (str): Path to dataframe pickle file
+#             p2res (str): Path to results pickle file
+#         """
+#         self.p2df = Path(p2df)
+#         self.p2res = Path(p2res)
+#         self.validate_files()
     
-    def validate_files(self):
-        """Validate that required files exist."""
-        if not self.p2df.exists():
-            raise FileNotFoundError(f"Data file not found: {self.p2df}")
-        if not self.p2res.exists():
-            raise FileNotFoundError(f"Results file not found: {self.p2res}")
+#     def validate_files(self):
+#         """Validate that required files exist."""
+#         if not self.p2df.exists():
+#             raise FileNotFoundError(f"Data file not found: {self.p2df}")
+#         if not self.p2res.exists():
+#             raise FileNotFoundError(f"Results file not found: {self.p2res}")
 
 
 class AUCProcessor(SimiCBase):
@@ -82,8 +82,14 @@ class AUCProcessor(SimiCBase):
         weight_dic = self.res_dict['weight_dic']
         self.TF_ids = self.res_dict['TF_ids']
         self.target_ids = self.res_dict['query_targets']
-
-        self.original_df = pd.read_pickle(self.p2df)
+        
+        if self.p2df.suffix == '.pickle':
+            self.original_df = pd.read_pickle(self.p2df)
+        elif self.p2df.suffix == '.csv':
+            self.original_df = pd.read_csv(self.p2df, index_col = 0, header = 0)
+        else:
+            raise ValueError('Dataframe file format not supported! Please provide a .pickle or .csv file.')
+        
         target_df = self.original_df[self.target_ids]
         
         # Euclidean norm of target expresion
@@ -102,7 +108,7 @@ class AUCProcessor(SimiCBase):
         self.adj_r2_dict = self.res_dict['adjusted_r_squared']
 
     @staticmethod
-    def cal_AUC(row_vec_in, weight_vec_in, cur_adj_r2_for_all_target, sort_by, adj_r2_threshold=0.7, select_top_k_targets=None, percent_of_target=1):
+    def cal_AUC(row_vec_in, weight_vec_in, cur_adj_r2_for_all_target, sort_by, adj_r2_threshold = 0.7, select_top_k_targets = None, percent_of_target = 1):
         """
         Calculate the AUC score for a given row and weight vector.
         """
@@ -170,14 +176,19 @@ class AUCProcessor(SimiCBase):
             weight_vec_in = weight_mat[tf_idx, :]
             AUC_score = self.cal_AUC(
                 row_vec_in, weight_vec_in, cur_adj_r2_for_all_target,
-                sort_by=sort_by, adj_r2_threshold=adj_r2_threshold,
-                select_top_k_targets=select_top_k_targets, percent_of_target=percent_of_target
+                sort_by = sort_by, adj_r2_threshold = adj_r2_threshold,
+                select_top_k_targets = select_top_k_targets, percent_of_target = percent_of_target
             )
             tmp_AUC_row[tf_idx] = AUC_score
 
         return row_idx, tmp_AUC_row
 
-    def get_AUCell_mat(self, adj_r2_threshold=0.7, select_top_k_targets=None, percent_of_target=1, sort_by='expression', num_cores=None):
+    def get_AUCell_mat(self, 
+                       adj_r2_threshold: float = 0.7,  
+                       select_top_k_targets:int = None, 
+                       percent_of_target: float = 1, 
+                       sort_by:str ='expression', 
+                       num_cores: int = 1):
         """
         Compute the AUC matrix for all labels and TFs using joblib for parallel processing.
 
@@ -186,68 +197,87 @@ class AUCProcessor(SimiCBase):
             select_top_k_targets (int or None): Number of top targets to consider. If None, use all targets.
             percent_of_target (float): Fraction of targets to consider (e.g., 0.8 means 80% of targets).
             sort_by (str): Criterion for sorting targets ('expression', 'weight', or 'adj_r2').
-            num_cores (int or None): Number of CPU cores to use. If None, use all available cores.
+            num_cores (int): Number of CPU cores to use. If None, use all available cores.
         """ 
         assert sort_by in ['expression', 'weight', 'adj_r2']
 
         df_in = self.original_df.reset_index(drop=True)
         original_index = self.original_df.index
         AUC_dict = {}
-        # Determine the number of cores to use        
-        if num_cores is None:
-            num_cores = -1 # Use all available cores
-        print(f"Using {num_cores if num_cores > 0 else 'all available'} cores for parallel processing.")
+        # Determine the number of cores to use
         if num_cores == 0:
-            num_cores = 1  # Fallback to single core if 0 is provided
-        for label in self.normalized_weights:
+            num_cores = 1  # Fallback to single core if 0 is provided        
+        if num_cores is None:
+            num_cores = -2 # Use all but 1 cores
+        print(f"Using {num_cores if num_cores > 0 else 'all available'} cores for parallel processing.")
+                
+        # Define a helper function to process a single label
+        def process_label(label):
             weight_mat = np.abs(self.normalized_weights[label])
             cur_adj_r2_for_all_target = self.adj_r2_dict[label]
             
             time_start = time.time()
 
-# Prepare arguments for parallel processing
+            # Prepare arguments for parallel processing
             args = [
                 (row_idx, row, weight_mat, cur_adj_r2_for_all_target, adj_r2_threshold, select_top_k_targets, percent_of_target, sort_by)
                 for row_idx, row in df_in.iterrows()
             ]
 
-# Use joblib to parallelize row processing
+            # Use joblib to parallelize row processing
             try:
-                results = Parallel(n_jobs=num_cores)(
+                results = Parallel(n_jobs = num_cores)(
                     delayed(self._process_row)(arg) for arg in args
                 )
             except Exception as e:
-                print(f"Joblib parallel processing failed: {e}")
+                print(f"Joblib parallel processing failed for label {label}: {e}")
                 print("Falling back to sequential processing...")
                 results = [self._process_row(arg) for arg in args]
 
-# Collect results
+            # Collect results
             AUC_mat = np.zeros([df_in.shape[0], len(self.TF_ids)])
             for row_idx, tmp_AUC_row in results:
                 AUC_mat[row_idx, :] = tmp_AUC_row
 
-# End timing for the current label
+            # End timing for the current label
             time_end = time.time()
-
             print(f"Label {label} processed in {time_end - time_start:.2f} seconds")
-            AUC_dict[label] = pd.DataFrame(data=AUC_mat, columns=self.TF_ids, index=original_index)
+
+            # Return the label and its corresponding AUC matrix
+            return label, pd.DataFrame(data = AUC_mat, columns = self.TF_ids, index = original_index)
+            # Parallelize the processing of labels
+        try:
+            label_results = Parallel(n_jobs=num_cores)(
+                delayed(process_label)(label) for label in self.normalized_weights
+            )
+        except Exception as e:
+            print(f"Joblib parallel processing failed for labels: {e}")
+            print("Falling back to sequential processing...")
+            label_results = [process_label(label) for label in self.normalized_weights]
+        # Collect results into AUC_dict
+        for label, auc_df in label_results:
+            AUC_dict[label] = auc_df
 
         self.AUC_dict = AUC_dict
         return AUC_dict
 
-    def save_AUC_dict(self, p2auc_file, adj_r2_threshold=0.7, select_top_k_targets=None, percent_of_target=1, sort_by='expression', num_cores=None):
+    def save_AUC_dict(self, p2auc_file, adj_r2_threshold = 0.7,
+                       select_top_k_targets = None,
+                       percent_of_target = 1, 
+                       sort_by = 'expression', 
+                       num_cores = 1):
         """
         Calculate and save the AUC matrix to a file.
         """
         AUC_dict = self.get_AUCell_mat(
-            adj_r2_threshold=adj_r2_threshold, select_top_k_targets=select_top_k_targets,
-            percent_of_target=percent_of_target, sort_by=sort_by, num_cores = num_cores
+            adj_r2_threshold = adj_r2_threshold, select_top_k_targets = select_top_k_targets,
+            percent_of_target = percent_of_target, sort_by = sort_by, num_cores = num_cores
         )
 
         write_pickle(AUC_dict, p2auc_file)
 
 
-def run_AUCprocessor(p2df, p2res, p2auc_file, percent_of_target=1, sort_by='expression', adj_r2_threshold=0.7, select_top_k_targets=None, debug=False, num_cores=0):
+def run_AUCprocessor(p2df, p2res, p2auc_file, percent_of_target = 1, sort_by = 'expression', adj_r2_threshold = 0.7, select_top_k_targets = None,  num_cores = 1):
     """
     Main function to calculate and save the AUC matrix using the AUCProcessor class.
     """
@@ -263,11 +293,11 @@ def run_AUCprocessor(p2df, p2res, p2auc_file, percent_of_target=1, sort_by='expr
     print(f"Starting at {time.strftime('%X %x %Z')}")
     processor.save_AUC_dict(
         p2auc_file,
-        adj_r2_threshold=adj_r2_threshold,
-        select_top_k_targets=select_top_k_targets,
-        percent_of_target=percent_of_target,
-        sort_by=sort_by,
-        num_cores=num_cores
+        adj_r2_threshold = adj_r2_threshold,
+        select_top_k_targets = select_top_k_targets,
+        percent_of_target = percent_of_target,
+        sort_by = sort_by,
+        num_cores = num_cores
     )
     print(f"AUC matrices saved to: {p2auc_file}")
     print(f"Finishing at {time.strftime('%X %x %Z')}")

@@ -29,7 +29,7 @@ N_TARGETS = 1000  # Number of top target genes to select
 
 # Annotation column from your data (set to None if not available)
 ANNOTATION_COLUMN = 'sample_type'  # e.g., 'cell_type' or 'treatment'
-
+ANNOTATION_ORDER = ['control','treated']  # Optional: specify order of annotation categories for plotting
 # ============================================================================
 # IMPORTS
 # ============================================================================
@@ -153,7 +153,8 @@ experiment.save_experiment_files(
     run_data=subset_data,
     matrix_filename='expression_matrix.pickle',
     tf_filename='TF_list.csv',
-    annotation=ANNOTATION_COLUMN
+    annotation=ANNOTATION_COLUMN,
+    annotation_order = ANNOTATION_ORDER
 )
 
 print(experiment.print_project_info())

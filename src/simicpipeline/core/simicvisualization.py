@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from typing import Optional, List, Union, Dict
 import warnings
+from simicpipeline.core.base import _load_assignment_file
 
 # Required optional dependencies
 try:
@@ -104,23 +105,50 @@ class SimiCVisualization(SimiCBase):
         if adata is not None:
             self.set_adata(adata)
         
-        # Default plot settings
-        self.default_figsize = (12, 6)
+        # Dynamically determine labels from available data
+        self.labels = self._get_labels_from_data()
         
-        # Label names mapping
-        if label_names is not None:
-            if colors is not None:
-                self.set_label_names(p2assignment= self.p2assignment,
-                                     label_names= label_names, colors = colors)
-            else:   
-                self.set_label_names(p2assignment= self.p2assignment,
-                                     label_names= label_names)
-        else:   
-            self.label_names = {}
-            self.colors = {}
+        # Default label names and colors
+        if label_names is None:
+            self.label_names = {label: f"Label {label}" for label in self.labels}
+        else:
+            self.label_names = {int(k): str(v) for k, v in label_names.items()}
+        
+        if colors is None:
+            default_colors = ["steelblue", "orange", "green", "purple", "brown", "pink", "gray", "olive", "cyan", "red"]
+            self.colors = {label: default_colors[i % len(default_colors)] for i, label in enumerate(self.labels)}
+        else:
+            self.colors = {int(k): v for k, v in colors.items()}
 
     # def set_paths        
+    def _get_labels_from_data(self) -> List[int]:
+        """
+        Dynamically determine the labels from the available data.
 
+        Returns:
+            List[int]: List of labels found in the data.
+        """
+        try:
+            # Check the keys of the relevant dictionaries to determine labels
+            if hasattr(self, 'p2simic_matrices') and self.p2simic_matrices.exists():
+                data = self.load_results('Ws_raw')
+                return list(data['weight_dic'].keys())
+            elif hasattr(self, 'p2filtered_matrices') and self.p2filtered_matrices.exists():
+                data = self.load_results('Ws_filtered')
+                return list(data['weight_dic'].keys())
+            elif hasattr(self, 'p2auc_raw') and self.p2auc_raw.exists():
+                data = self.load_results('auc_raw')
+                return list(data.keys())
+            elif hasattr(self, 'p2auc_filtered') and self.p2auc_filtered.exists():
+                data = self.load_results('auc_filtered')
+                return list(data.keys())
+            else:
+                print("Warning: No data found to determine labels.")
+                return []
+        except Exception as e:
+            print(f"Error determining labels from data: {e}")
+            return []
+    
     def set_adata(self, adata: Union[Path, str, ad.AnnData]):
         """
         Set or update the AnnData object.
@@ -209,12 +237,12 @@ class SimiCVisualization(SimiCBase):
         print("PLOTTING R² DISTRIBUTIONS")
         print("="*70 + "\n")
 
+        # Use self.labels if no labels are provided
+        if labels is None:
+            labels = self.labels
         # Load results
         results = self.load_results("Ws_filtered")
         adj_r2 = results["adjusted_r_squared"]
-
-        if labels is None:
-            labels = list(adj_r2.keys())
         n_labels = len(labels)
 
         if grid_layout is not None:
@@ -233,6 +261,7 @@ class SimiCVisualization(SimiCBase):
             axes = axes.flatten()
         else:
             axes = [axes]
+        
         # Plot each label
         for idx, label in enumerate(labels):
             # Data to plot
@@ -240,6 +269,9 @@ class SimiCVisualization(SimiCBase):
             selected = np.sum(r2_values > threshold)
             mean_r2 = np.mean(r2_values[r2_values > threshold]) if selected > 0 else 0
             label_name = self._get_label_name(label)
+            
+            # Get custom color for the label, or fall back to default
+            bar_color = self.colors.get(int(label), "gray") # Default to "gray" if no color is defined
             # Figure
             ax = axes[idx]
 
@@ -247,7 +279,8 @@ class SimiCVisualization(SimiCBase):
                 r2_values,
                 bins=100,
                 alpha=0.7,
-                edgecolor="black"
+                edgecolor="black",
+                color=bar_color  # Use the custom or default color
             )
 
             ax.axvline(
@@ -309,8 +342,9 @@ class SimiCVisualization(SimiCBase):
         tf_ids = results['TF_ids']
         target_ids = results['query_targets']
         
+        # Use self.labels if no labels are provided
         if labels is None:
-            labels = list(weight_dic.keys())
+            labels = self.labels
         
         # Get unselected targets per label
         adj_r2 = results['adjusted_r_squared']
@@ -427,7 +461,6 @@ class SimiCVisualization(SimiCBase):
         # Plot
         x_pos = np.arange(len(gene_order))
         bar_width = 0.8 / len(labels)
-        default_colors = ["steelblue", "orange", "green", "purple", "brown"]
         
         for label_idx, label in enumerate(labels):
             label_data = df[df['label'] == str(label)]
@@ -438,7 +471,7 @@ class SimiCVisualization(SimiCBase):
             ]
             
             label_name = self._get_label_name(label)
-            bar_color = self.colors.get(int(label), default_colors[label_idx % len(default_colors)])
+            bar_color = self.colors.get(int(label))
             
             ax.bar(x_pos + label_idx * bar_width, weights_ordered, 
                 bar_width, label=label_name, 
@@ -894,7 +927,6 @@ class SimiCVisualization(SimiCBase):
             pdf_path = None
         
         # Process TFs in batches (pages)
-        # default_colors = ["steelblue", "orange", "green", "purple", "brown"]
         
         all_figs = []
         
@@ -981,13 +1013,6 @@ class SimiCVisualization(SimiCBase):
             return all_figs[0] if len(all_figs) == 1 else all_figs
         return None
 
-    def _get_label_color(self, label: Union[int, str], label_idx: int) -> str:
-        """Get the color for a label, falling back to a default palette."""
-        default_colors = ["steelblue", "orange", "green", "purple", "brown"]
-        if int(label) in self.colors:
-            return self.colors[int(label)]
-        return default_colors[label_idx % len(default_colors)]
-
     def _render_density_subplot(self, ax, tf_name: str, labels: List, 
                                      alpha: float, 
                                     dissim_scores: pd.DataFrame,
@@ -1019,7 +1044,7 @@ class SimiCVisualization(SimiCBase):
                     continue
                 
                 label_name = self._get_label_name(label)
-                color = self._get_label_color(label, label_idx)
+                color = self.colors.get(int(label))
                 legend_label = f'{label_name} (n={n_values})'
 
                 # Check if all values are the same (would cause density plot to fail)
@@ -1068,7 +1093,7 @@ class SimiCVisualization(SimiCBase):
                         orientation="horizontal",
                         colors='tab:gray',
                         linewidths=1,
-                        linelengths=rug_length,
+                        linelengths=1,
                         lineoffsets=-rug_length * 0.5)
 
     def _render_cumulative_subplot(self, ax, tf_name: str, labels: List, 
@@ -1100,7 +1125,7 @@ class SimiCVisualization(SimiCBase):
                     continue
                 
                 label_name = self._get_label_name(label)
-                color = self._get_label_color(label, label_idx)
+                color = self.colors.get(int(label))
                 
                 # Calculate ECDF
                 sorted_values = np.sort(values)
@@ -2035,14 +2060,8 @@ class SimiCVisualization(SimiCBase):
         # Prepare label names
         label_names = [self._get_label_name(l) for l in labels]
         
-        # Get colors for labels
-        colors_list = []
-        default_colors = ["steelblue", "orange", "green", "purple", "brown"]
-        for idx, label in enumerate(labels):
-            if int(label) in self.colors:
-                colors_list.append(self.colors[int(label)])
-            else:
-                colors_list.append(default_colors[idx % len(default_colors)])
+        # Get colors for labels from self.colors
+        colors_list = [self.colors.get(int(label)) for label in labels]
         
         # Collect AUC data for all labels
         auc_data_list = []
@@ -2355,5 +2374,6 @@ class SimiCVisualization(SimiCBase):
 # Export functions from SimiCPipeline
 SimiCVisualization.calculate_dissimilarity = SimiCPipeline.calculate_dissimilarity
 SimiCVisualization.subset_label_specific_auc = SimiCPipeline.subset_label_specific_auc
+SimiCVisualization._load_assignment_file = _load_assignment_file
 SimiCVisualization.get_TF_network = SimiCPipeline.get_TF_network
 SimiCVisualization.get_TF_auc = SimiCPipeline.get_TF_auc

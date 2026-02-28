@@ -24,7 +24,7 @@ RUN_NAME = 'experiment1'
 
 # Input file paths
 INPUT_MATRIX = PROJECT_DIR + '/inputFiles/expression_matrix.pickle'
-INPUT_ASSIGNMENT = PROJECT_DIR + '/inputFiles/treatment_annotation.txt'
+INPUT_ASSIGNMENT = PROJECT_DIR + '/inputFiles/sample_type_annotation.csv'
 INPUT_TF_LIST = PROJECT_DIR + '/inputFiles/TF_list.pickle'
 
 # SimiC Parameters
