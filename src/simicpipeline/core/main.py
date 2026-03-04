@@ -127,7 +127,7 @@ class SimiCPipeline(SimiCBase):
         self.p2auc_raw = self.run_path / f"{base_name}_wAUC_matrices.pickle"
         self.p2auc_filtered = self.run_path / f"{base_name}_wAUC_matrices_filtered_BIC.pickle"
 
-    def validate_inputs(self):
+    def validate_inputs(self, muted: bool = False) -> None:
         """Validate that all required input files exist."""
         if self.p2assignment is None and self.df_with_label is False:
             raise ValueError("Either a phenotype assignment file (p2assignment) must be provided or the expression dataframe must contain labels in the last column (set df_with_label=True).")
@@ -139,8 +139,8 @@ class SimiCPipeline(SimiCBase):
         
         if missing_files:
             raise FileNotFoundError(f"Missing required input files: {missing_files}")
-        
-        print("✓ All required input files found")
+        if not muted:
+            print("✓ All required input files found")
 # Parameter management functions 
     def set_parameters(self,
                        lambda1: Optional[float] = None,

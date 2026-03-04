@@ -194,6 +194,7 @@ def _load_assignment_file(p2assignment: Union[str, Path]) -> np.ndarray:
         np.ndarray: Array of integer labels
     """
     p2assignment = Path(p2assignment)
+    self.validate_inputs(muted=True)
     # Try reading as CSV with header first
     try:
         df = pd.read_csv(p2assignment, sep=',', skipinitialspace=True)
