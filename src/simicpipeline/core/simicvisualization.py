@@ -1462,7 +1462,7 @@ class SimiCVisualization(SimiCBase):
                         labels: Optional[List[Union[int, str]]] = None,
                         integration_range: tuple = (0, 1),
                         percentile: float = 0.5,
-                        mute: bool = False,
+                        mute: bool = True,
                         save: bool = False,
                         filename: Optional[str] = None) -> Optional[pd.DataFrame]:
         """
