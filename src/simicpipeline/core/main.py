@@ -538,12 +538,25 @@ class SimiCPipeline(SimiCBase):
 
 
 # Functions for analyzing results
-    def get_TF_network(self, TF_name: str, stacked: bool = False):
+    def get_unselected_targets(self, results: str = 'Ws_filtered', 
+                                     r2_threshold: float = 0.7):
+        # Load results
+        results = self.load_results(results)
+        # Get unselected targets per label
+        adj_r2 = results['adjusted_r_squared']
+        target_ids = results['query_targets']
+        unselected_targets = {}
+        for label in adj_r2.keys():
+            unselected_targets[label] = [target_ids[i] for i, r2 in enumerate(adj_r2[label]) if r2 < r2_threshold]
+        return unselected_targets
+    
+    def get_TF_network(self, TF_name: str, stacked: bool = False, r2_threshold: Optional[float] = None):
         """
         Retrieve the TF-target weight matrix.
         Args:
             TF_name (str): Name of the transcription factor.
             stacked (bool): If True, returns a DataFrame with targets as rows and labels as columns.
+            r2_threshold (float): Optional R-squared threshold to filter out targets that do not meet the threshold in the AUC calculation step. If provided, targets with adjusted R-squared below this threshold will be removed from the results.
         Output:
             pd.DataFrame or dict: If stacked is True, returns a DataFrame with targets as rows and labels as columns.
                                   If stacked is False, returns a dictionary with labels as keys and Series of target weights as values.
@@ -553,26 +566,57 @@ class SimiCPipeline(SimiCBase):
         weight_dic = simic_results['weight_dic']
         TF_ids = simic_results['TF_ids']
         target_ids = simic_results['query_targets']
-        if TF_name not in TF_ids:
-            raise ValueError(f"TF '{TF_name}' not found in TF list.")
-        print(f"Retrieving network for TF: {TF_name}")
-        TF_index = TF_ids.index(TF_name)
-        if stacked:
-            tf_weights = [weight_dic[label][TF_index, :] for label in weight_dic.keys()]
-            ws_df = pd.DataFrame(np.column_stack(tf_weights), index=target_ids, columns=weight_dic.keys())
-            ws_df = ws_df.loc[(ws_df!=0).any(axis=1)]
-            return ws_df
+        adj_r2 = simic_results.get('adjusted_r_squared', {})
 
-        tf_weights_filtered = {}
-        for label in weight_dic.keys():
-            weights = weight_dic[label]
-            tf_weights = weights[TF_index, :]  # Get weights for the specified TF
-            print(f"\nLabel {label}:")
-            target_tupl = [(tf_weights[i], target_ids[i]) for i in range(len(target_ids)) if tf_weights[i] != 0]
-            target_ws, target_names = zip(*target_tupl)
-            target_ws_df = pd.Series(data=list(target_ws), index=list(target_names))
-            tf_weights_filtered[label] = target_ws_df
-        return tf_weights_filtered
+        # Get the mask as it does not change across TFs, only depends on the target gene and the label
+        if r2_threshold is not None and isinstance(adj_r2, dict):
+            mask = list()
+            for label in adj_r2.keys():
+                if len(adj_r2[label]) != len(target_ids):
+                    raise ValueError("Length of adjusted R-squared values for label {label} does not match number of targets. Double check imput data.")
+                else:
+                    mask.append(np.array(adj_r2[label]) < r2_threshold)
+
+            if TF_name not in TF_ids:
+                raise ValueError(f"TF '{TF_name}' not found in TF list.")
+            print(f"Retrieving network for TF: {TF_name}")
+        
+        TF_index = TF_ids.index(TF_name)
+        tf_weights = [weight_dic[label][TF_index, :] for label in weight_dic.keys()]
+        
+
+        ws_df = pd.DataFrame(np.column_stack(tf_weights), index=target_ids, columns=weight_dic.keys())
+        initial_count = ws_df.shape[0]
+        # Set entries to NaN where adj_r2 < threshold (if r2_threshold provided)
+        if r2_threshold is not None:
+            mask = pd.DataFrame(np.column_stack(mask), index=target_ids, columns=adj_r2.keys())
+            if mask.shape[0] == ws_df.shape[0]: # Ensure mask length matches rows
+                ws_df.mask(mask, inplace=True)                        
+        # Remove rows where all weights are zero)
+        ws_df = ws_df.loc[(ws_df!=0).any(axis=1)]
+        mid_count = ws_df.shape[0]           
+        # sort targets by maximum absolute weight across labels (descending)
+        # treat NaN as missing; compute max abs, fill NaN with 0 for sorting
+        max_abs = ws_df.abs().max(axis=1, skipna=True).fillna(0)
+        sorted_idx = max_abs.sort_values(ascending=False).index
+        ws_df = ws_df.loc[sorted_idx]
+
+        # remove rows that are all zero/NaN
+        ws_df = ws_df.loc[(ws_df.fillna(0) != 0).any(axis=1)]
+        final_count = ws_df.shape[0]
+        filtered_count = initial_count - final_count
+        removed_due_zero = initial_count - mid_count
+        removed_due_r2 = mid_count - final_count
+        print(f"Filtered out {filtered_count} targets. {final_count} targets remain.")
+        print(f"  - {removed_due_zero} targets removed due to zero weights across all labels.")
+        print(f"  - {removed_due_r2} targets removed due r2 across all labels .")
+        
+        if stacked:
+            return ws_df
+        else:
+            series_list = [ws_df[col] for col in ws_df]
+            return series_list
+        
     
     def get_TF_auc(self, TF_name: str, stacked: bool = False):
         """

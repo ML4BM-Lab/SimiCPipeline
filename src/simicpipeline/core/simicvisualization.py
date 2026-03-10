@@ -341,16 +341,18 @@ class SimiCVisualization(SimiCBase):
         weight_dic = results['weight_dic']
         tf_ids = results['TF_ids']
         target_ids = results['query_targets']
-        
+        # adj_r2 = results['adjusted_r_squared']
+
         # Use self.labels if no labels are provided
         if labels is None:
             labels = self.labels
         
         # Get unselected targets per label
-        adj_r2 = results['adjusted_r_squared']
-        unselected_targets = {}
-        for label in labels:
-            unselected_targets[label] = [target_ids[i] for i, r2 in enumerate(adj_r2[label]) if r2 < r2_threshold]
+        unselected_targets = self.get_unselected_targets('Ws_filtered', r2_threshold = r2_threshold)
+    
+        # unselected_targets = {}
+        # for label in labels:
+        #     unselected_targets[label] = [target_ids[i] for i, r2 in enumerate(adj_r2[label]) if r2 < r2_threshold]
         
         # Determine which genes to plot
         gene_list = tf_ids if gene_type == 'tf' else target_ids
@@ -512,7 +514,7 @@ class SimiCVisualization(SimiCBase):
             save: Whether to save the figure
             filename: Custom filename for saved figure
         """
-        gene_type_label = "TF" if gene_type == 'tf' else "TARGET"
+        gene_type_label = gene_type.upper()
         print("\n" + "="*70)
         print(f"PLOTTING {gene_type_label} WEIGHT BARPLOTS")
         print("="*70 + "\n")
@@ -527,7 +529,7 @@ class SimiCVisualization(SimiCBase):
         genes_to_plot, labels, weight_dic, tf_ids, target_ids, unselected_targets, mute = prep_result
         
         # Filter targets that are valid
-        if gene_type == 'target':
+        if gene_type == 'TARGET':
             valid_genes = []
             for gene in genes_to_plot:
                 if not all(gene in unselected_targets[label] for label in labels):
@@ -607,7 +609,7 @@ class SimiCVisualization(SimiCBase):
                 # Plot
                 self._plot_weight_barplot(
                     axes[plot_idx], df, gene_name, gene_type, labels, 
-                    top_n=top_n if gene_type == 'tf' else None
+                    top_n = top_n if gene_type == 'tf' else None
                 )
             
             # Hide unused subplots
@@ -668,18 +670,21 @@ class SimiCVisualization(SimiCBase):
 
     def plot_tf_network_heatmap(self, tf_name: str,
                                top_n_targets: int = 10,
+                               r2_threshold: Optional[float] = None,
                                labels: Optional[List[Union[int, str]]] = None,
                                cmap: str = 'RdBu_r',
                                vmin: Optional[float] = None,
                                vmax: Optional[float] = None,
                                save: bool = True,
-                               filename: Optional[str] = None):
+                               filename: Optional[str] = None,
+                               mute: bool = False):
         """
         Plot heatmap of TF regulatory network showing weights across phenotypes.
         
         Args:
             tf_name: Transcription factor name
             top_n_targets: Number of top targets to display (by max absolute weight)
+            r2_threshold: Minimum adjusted R² threshold for including targets
             labels: Phenotype labels to include (default: all)
             cmap: Colormap to use (default: 'RdBu_r' - red/white/blue)
                   Red gradient for positive weights, blue gradient for negative weights
@@ -687,7 +692,10 @@ class SimiCVisualization(SimiCBase):
             vmax: Maximum value for colormap (default: auto-calculated from data, symmetric around 0)
             save: Whether to save the figure
             filename: Custom filename for saved figure
+            mute: If True, suppress console output
         """
+        from matplotlib import cm, colors
+
         print("\n" + "="*70)
         print(f"PLOTTING TF NETWORK HEATMAP")
         print("="*70 + "\n")
@@ -696,7 +704,7 @@ class SimiCVisualization(SimiCBase):
         
         # Get network for the TF
         try:
-            network = self.get_TF_network(tf_name, stacked=True)
+            network = self.get_TF_network(tf_name, stacked=True, r2_threshold = r2_threshold)
         except Exception as e:
             print(f"Error: Could not retrieve network for {tf_name}: {e}")
             return None
@@ -718,9 +726,9 @@ class SimiCVisualization(SimiCBase):
         # Calculate max absolute weight across all phenotypes
         network['max_abs_weight'] = network.abs().max(axis=1)
         top_targets = network.nlargest(top_n_targets, 'max_abs_weight')
-        
-        print(f"\nTop {top_n_targets} targets by absolute weight:")
-        print(top_targets.drop('max_abs_weight', axis=1).to_string())
+        if not mute:
+            print(f"\nTop {top_n_targets} targets by absolute weight:")
+            print(top_targets.drop('max_abs_weight', axis=1).to_string())
         
         # Create heatmap
         fig, ax = plt.subplots(figsize=(max(8, len(top_targets.columns) * 1.2), 
@@ -737,9 +745,19 @@ class SimiCVisualization(SimiCBase):
             max_abs = max(abs(data_min), abs(data_max))
             vmin = -max_abs
             vmax = max_abs
+       
+        # Create a colormap copy and set bad (NaN) color to light gray
+        base_cmap = cm.get_cmap(cmap)
+        cmap_map = colors.ListedColormap(base_cmap(np.linspace(0, 1, 256)))
+        cmap_map.set_bad(color='darkgray')
+
         
+        # Use masked array so NaNs draw with 'bad' color
+        masked_data = np.ma.masked_invalid(plot_data.values)
+        im = ax.imshow(masked_data, cmap=cmap_map, aspect='auto', vmin=vmin, vmax=vmax)
+
         # Create the heatmap
-        im = ax.imshow(plot_data.values, cmap=cmap, aspect='auto', vmin=vmin, vmax=vmax)
+        # im = ax.imshow(plot_data.values, cmap=cmap, aspect='auto', vmin=vmin, vmax=vmax)
         
         # Set labels
         ax.set_xticks(np.arange(len(plot_data.columns)))
@@ -757,11 +775,19 @@ class SimiCVisualization(SimiCBase):
         # Add values to cells
         for i in range(len(plot_data.index)):
             for j in range(len(plot_data.columns)):
-                value = plot_data.values[i, j]
-                text_color = 'white' if abs(value) > (max_abs / 2) else 'black'
-                text = ax.text(j, i, f'{value:.2f}',
-                             ha='center', va='center',
-                             color=text_color, fontsize=8)
+                val = plot_data.values[i, j]
+                if np.isnan(val):
+                    text = ax.text(j, i, '< R2 threshold',
+                                   ha='center', va='center',
+                                   color='black', fontsize=7,
+                                   zorder=10, clip_on=False,
+                                   bbox=dict(facecolor='none', edgecolor='none', pad=0.2))
+                else:
+                    text_color = 'white' if abs(val) > 0 else 'black'
+                    text = ax.text(j, i, f'{val:.2f}',
+                                   ha='center', va='center',
+                                   color=text_color, fontsize=8,
+                                   zorder=10, clip_on=False)
         
         # Add title
         ax.set_title(f'Top {top_n_targets} Targets for {tf_name}\nacross phenotypes',
@@ -784,8 +810,9 @@ class SimiCVisualization(SimiCBase):
                 print(f"Error saving figure: {e}")
             finally:
                 plt.close(fig) 
-        
-        return fig
+
+        return fig, plot_data
+
 
 # ...existing code... (everything before plot_auc_distributions)
 
@@ -1023,7 +1050,7 @@ class SimiCVisualization(SimiCBase):
         rug = plot_kwargs.get('rug')
         mute = plot_kwargs.get('mute')
         plotted_any = False
-        rug_list = []
+      
         
         for label_idx, label in enumerate(labels):
             try:
@@ -1035,7 +1062,7 @@ class SimiCVisualization(SimiCBase):
                     continue
                 
                 values = auc_subset[tf_name].dropna()
-                rug_list.extend(values.tolist())
+                
                 n_values = len(values)
 
                 if len(values) < min_data_points:
@@ -1070,7 +1097,17 @@ class SimiCVisualization(SimiCBase):
                         values.plot.density(ax=ax, label=legend_label, 
                                             color=color, alpha=1.0, linewidth=2,
                                             bw_method=bw_adjust)
-                    
+                    # Add rug plot at bottom
+                    if rug and n_values:
+                        yticks = ax.get_yticks()
+                        tick_spacing = yticks[1] - yticks[0]
+                        rug_length = 0.1 * tick_spacing
+                        ax.eventplot(values,
+                                    orientation= "horizontal",
+                                    colors = color,
+                                    linewidths=1,
+                                    linelengths=1,
+                                    lineoffsets=- 1)
                     plotted_any = True
                     
                 except Exception as plot_error:
@@ -1084,17 +1121,7 @@ class SimiCVisualization(SimiCBase):
         # Format subplot
         self._format_auc_subplot(ax, tf_name, plotted_any, 'Density', dissim_scores)
         
-        # Add rug plot at bottom
-        if rug and rug_list:
-            yticks = ax.get_yticks()
-            tick_spacing = yticks[1] - yticks[0]
-            rug_length = 0.2 * tick_spacing
-            ax.eventplot(rug_list,
-                        orientation="horizontal",
-                        colors='tab:gray',
-                        linewidths=1,
-                        linelengths=1,
-                        lineoffsets=-rug_length * 0.5)
+
 
     def _render_cumulative_subplot(self, ax, tf_name: str, labels: List, 
                                     alpha: float, 
@@ -1105,7 +1132,6 @@ class SimiCVisualization(SimiCBase):
         rug = plot_kwargs.get('rug')
         
         plotted_any = False
-        rug_list = []
         
         for label_idx, label in enumerate(labels):
             try:
@@ -1117,7 +1143,7 @@ class SimiCVisualization(SimiCBase):
                     continue
                 
                 values = auc_subset[tf_name].dropna()
-                rug_list.extend(values.tolist())
+
 
                 if len(values) < 1:
                     if not mute:
@@ -1141,6 +1167,23 @@ class SimiCVisualization(SimiCBase):
                         label=f'{label_name} (n={n_values})',
                         color=color, alpha=alpha, linewidth=2)
                 
+                # Add rug plot at bottom
+                if rug and n_values:
+                    rug_y = -0.03
+                    rug_length = 0.025
+                    ax.eventplot(values,
+                                orientation = "horizontal",
+                                colors = color,
+                                linewidths = 1,
+                                linelengths = rug_length,
+                                lineoffsets = rug_y)
+                    
+                    # Expand ylim to show rug marks
+                    ax.set_ylim(rug_y - rug_length, 1.05)
+                else:
+                    ax.set_ylim(0, 1.05)
+            
+            # Draw table below plot with ECDF-AUC and AUC50 metrics
                 plotted_any = True
                 
             except Exception as e:
@@ -1167,25 +1210,10 @@ class SimiCVisualization(SimiCBase):
         # Format subplot
         self._format_auc_subplot(ax, tf_name, plotted_any,'Cumulative Probability', dissim_scores=None, subtitle=subtitle_parts)
         
-        if plotted_any:
-            # Add rug plot BEFORE setting final ylim
-            if rug and rug_list:
-                rug_y = -0.03
-                rug_length = 0.025
-                ax.eventplot(rug_list,
-                            orientation="horizontal",
-                            colors='tab:gray',
-                            linewidths=1,
-                            linelengths=rug_length,
-                            lineoffsets=rug_y)
-                # Expand ylim to show rug marks
-                ax.set_ylim(rug_y - rug_length, 1.05)
-            else:
-                ax.set_ylim(0, 1.05)
-            # Draw table below plot with ECDF-AUC and AUC50 metrics
+        if plotted_any:            
             self._add_ecdf_table(ax, tf_name, ecdf_auc_scores)
         
-        # Add rug plot at bottom
+        
         
     def _add_ecdf_table(self, ax, tf_name: str, ecdf_auc_scores: pd.DataFrame):
         """
@@ -1580,49 +1608,7 @@ class SimiCVisualization(SimiCBase):
         
         return df
 
-    # @staticmethod
-    # def _compute_ecdf_auc(values: np.ndarray, x_lower: float = 0, x_upper: float = 1) -> float:
-    #     """
-    #     Compute the area under the ECDF step function over [x_lower, x_upper].
-        
-    #     The ECDF is a right-continuous step function: F(x) = (number of values <= x) / n.
-    #     The integral is computed exactly by summing rectangular areas between consecutive 
-    #     sorted values (where the ECDF is constant).
-        
-    #     Args:
-    #         values: Array of observed values
-    #         x_lower: Lower integration bound
-    #         x_upper: Upper integration bound
-            
-    #     Returns:
-    #         float: Area under the ECDF curve over [x_lower, x_upper],
-    #                 normalized by the range width so result is in [0, 1].
-    #     """
-    #     n = len(values)
-    #     sorted_vals = np.sort(values)
-        
-    #     # Clamp sorted values to integration range
-    #     # Build breakpoints: x_lower (0), then each sorted value within range, then x_upper (1)
-    #     breakpoints = sorted_vals[(sorted_vals > x_lower) & (sorted_vals < x_upper)]
-    #     breakpoints = np.concatenate(([x_lower], breakpoints, [x_upper]))
-        
-    #     # Calculate area (rectangle = width * height) for each interval between breakpoints
-    #     area = 0.0
-    #     for i in range(len(breakpoints) - 1):
-    #         x_left = breakpoints[i]
-    #         x_right = breakpoints[i + 1]
-    #         width = x_right - x_left
-            
-    #         # ECDF value in the interval (x_left, x_right] is F(x_left) = proportion of values <= x_left
-    #         ecdf_val = np.searchsorted(sorted_vals, x_left, side='right') / n
-    #         area += ecdf_val * width
-        
-    #     # Normalize by range width so result is in [0, 1]
-    #     range_width = x_upper - x_lower
-    #     if range_width > 0:
-    #         area /= range_width
-        
-    #         return area
+
     @staticmethod
     def _compute_ecdf_metrics(values: np.ndarray, x_lower: float = 0, x_upper: float = 1,
                                percentile: float = 0.5) -> dict:
@@ -1699,343 +1685,6 @@ class SimiCVisualization(SimiCBase):
             'auc_at_percentile': float(area_at_percentile),
             'x_at_percentile': float(x_at_percentile)
         }
-
-    # def _compute_auc_to_percentile(values: np.ndarray, percentile: float = 0.5) -> tuple:
-    #     """
-    #     Calculate AUC from x=0 until ECDF reaches the specified percentile.
-        
-    #     Returns:
-    #         tuple: (auc, x_at_percentile)
-    #     """
-    #     sorted_scores = np.sort(values)
-    #     n = len(sorted_scores)
-        
-    #     x = np.concatenate([[0], sorted_scores])
-    #     y = np.concatenate([[0], np.arange(1, n + 1) / n])
-        
-    #     idx = np.searchsorted(y, percentile)
-        
-    #     if idx >= len(y):
-    #         auc = float(np.sum(y[:-1] * np.diff(x)))
-    #         x_at_percentile = float(sorted_scores[-1])
-    #     elif idx == 0:
-    #         auc = 0.0
-    #         x_at_percentile = 0.0
-    #     else:
-    #         auc = float(np.sum(y[:idx-1] * np.diff(x[:idx])))
-    #         x_at_percentile = float(x[idx])
-    #         auc += float(y[idx-1] * (x[idx] - x[idx-1]))
-        
-    #     return auc, x_at_percentile
-
-    # def plot_auc_distributions(self, 
-    #                         tf_names: Union[str, List[str], None] = None,
-    #                         labels: Optional[List[Union[int, str]]] = None,
-    #                         fill: bool = True,
-    #                         alpha: float = 0.5,
-    #                         bw_adjust: Union[str, float] = "scott",
-    #                         rug: bool = False,
-    #                         grid_layout: Optional[tuple] = (4, 2),
-    #                         save: bool = True,
-    #                         filename: Optional[str] = None):
-    #     """
-    #     Plot AUC density distributions for specific TFs across phenotypes.
-        
-    #     Args:
-    #         tf_names: TF name(s) to plot. If None, plots all TFs sorted alphabetically.
-    #         labels: Phenotype labels to compare
-    #         fill: Whether to fill the density curves (default: True)
-    #         alpha: Transparency level for filled curves (0-1, default: 0.5)
-    #         bw_adjust: Bandwidth adjustment for density smoothness (default: "scott")
-    #                 Can be 'scott', 'silverman', or a float value
-    #                 Lower values (e.g., 0.2-0.5) = less smooth, more detail
-    #                 Higher values (e.g., 1.0-2.0) = more smooth
-    #         rug: Whether to add rug plot at bottom (default: False)
-    #         grid_layout: Tuple (rows, cols) for subplot grid per page. Default (4,2) = 8 plots per page.
-    #                     Set to None to put ALL plots on a single page (auto grid layout).
-    #         save: Whether to save the figure
-    #         filename: Custom filename for saved figure
-        
-    #     Examples:
-    #         # Plot specific TFs, 8 per page in 4x2 grid (multi-page PDF)
-    #         viz.plot_auc_distributions(tf_names=['TF1', 'TF2'])
-            
-    #         # Plot all TFs, 6 per page in 3x2 grid (multi-page PDF)
-    #         viz.plot_auc_distributions(grid_layout=(3, 2))
-            
-    #         # Plot specific TFs on a single page (auto grid layout)
-    #         viz.plot_auc_distributions(tf_names=['TF1', 'TF2'], grid_layout=None)
-    #     """
-    #     print("\n" + "="*70)
-    #     print(f"PLOTTING AUC DISTRIBUTIONS")
-    #     print("="*70 + "\n")
-        
-    #     # Load AUC results
-    #     try:
-    #         auc_data = self.load_results('auc_filtered')
-    #     except FileNotFoundError:
-    #         print("Error: AUC filtered results not found!")
-    #         return None
-        
-    #     if labels is None:
-    #         labels = list(auc_data.keys())
-        
-    #     # Calculate dissimilarity scores
-    #     try:
-    #         dissim_scores = self.calculate_dissimilarity(select_labels=labels, verbose=False)
-    #     except Exception as e:
-    #         print(f"Warning: Could not calculate dissimilarity scores: {e}")
-    #         dissim_scores = pd.DataFrame()
-        
-    #     # Determine which TFs to plot
-    #     if tf_names is not None:
-    #         if isinstance(tf_names, str):
-    #             tf_names = [tf_names]
-    #         tf_names = [tf for tf in tf_names if tf in auc_data[0].columns.to_list()]
-    #         if len(tf_names) == 0:
-    #             print("Error: None of the specified TFs found in AUC results.")
-    #             return None
-    #         mute = False
-    #     else:
-    #         tf_names = sorted(auc_data[0].columns.tolist())
-    #         mute = True
-        
-    #     # Filter out TFs that have no data
-    #     valid_tf_names = []
-    #     for tf_name in tf_names:
-    #         has_data = False
-    #         for label in labels:
-    #             try:
-    #                 auc_subset = self.subset_label_specific_auc('auc_filtered', label)
-    #                 if tf_name in auc_subset.columns:
-    #                     values = auc_subset[tf_name].dropna()
-    #                     if len(values) > 1:  # Need at least 2 points for density
-    #                         has_data = True
-    #                         break
-    #             except Exception:
-    #                 continue
-            
-    #         if has_data:
-    #             valid_tf_names.append(tf_name)
-    #         elif not mute:
-    #             print(f"Warning: Skipping {tf_name} - insufficient data for plotting")
-        
-    #     if not valid_tf_names:
-    #         print("Error: No valid TFs to plot!")
-    #         return None
-        
-    #     n_tfs = len(valid_tf_names)
-    #     print(f"Plotting {n_tfs} TFs...")
-        
-    #     # Import PdfPages for multi-page output
-    #     from matplotlib.backends.backend_pdf import PdfPages
-        
-    #     # Determine single-page vs multi-page mode
-    #     if grid_layout is None:
-    #         # SINGLE PAGE MODE: auto-calculate grid to fit all TFs
-    #         single_page_mode = True
-    #         # Use 2 columns for better layout
-    #         grid_cols = 2
-    #         grid_rows = (n_tfs + 1) // 2
-    #         plots_per_page = n_tfs
-    #         print(f"Single page mode: {grid_rows} rows x {grid_cols} cols (all {n_tfs} TFs on one page)")
-    #     else:
-    #         # MULTI-PAGE MODE: specified grid per page
-    #         single_page_mode = False
-    #         grid_rows, grid_cols = grid_layout
-    #         plots_per_page = grid_rows * grid_cols
-    #         n_pages = (n_tfs + plots_per_page - 1) // plots_per_page
-    #         print(f"Multi-page mode: {grid_rows} rows x {grid_cols} cols per page ({n_pages} pages)")
-        
-    #     # Prepare PDF path
-    #     if save:
-    #         fname = filename or f"{self.run_name}_AUC_distributions.pdf"
-    #         pdf_path = self.figures_path / fname
-    #         if not single_page_mode:
-    #             pdf_pages = PdfPages(pdf_path)
-    #         else:
-    #             pdf_pages = None
-    #     else:
-    #         pdf_pages = None
-    #         pdf_path = None
-        
-    #     # Process TFs in batches (pages)
-    #     default_colors = ["steelblue", "orange", "green", "purple", "brown"]
-        
-    #     all_figs = []
-        
-    #     if mute:
-    #         print(f"Generating all AUC distribution plots...")
-        
-    #     for page_idx, page_start in enumerate(range(0, n_tfs, plots_per_page)):
-    #         page_tfs = valid_tf_names[page_start:page_start + plots_per_page]
-            
-    #         # Calculate figure size
-    #         if single_page_mode:
-    #             # Single page: scale with number of TFs
-    #             fig_width = 14
-    #             fig_height = max(5, 5 * grid_rows)
-    #         else:
-    #             # Multi-page: fixed size per page based on grid
-    #             fig_width = 14
-    #             fig_height = 5 * grid_rows
-            
-    #         # Create figure for this page
-    #         if single_page_mode:
-    #             current_rows = grid_rows
-    #             current_cols = grid_cols
-    #         else:
-    #             current_rows = grid_rows
-    #             current_cols = grid_cols
-            
-    #         fig, axes = plt.subplots(current_rows, current_cols, figsize=(fig_width, fig_height))
-            
-    #         # Flatten axes for easier iteration
-    #         if current_rows == 1 and current_cols == 1:
-    #             axes = [axes]
-    #         else:
-    #             axes = np.array(axes).flatten()
-            
-    #         # Plot each TF in this page
-    #         for plot_idx, tf_name in enumerate(page_tfs):
-    #             if not mute:
-    #                 print(f"  [{page_start + plot_idx + 1}/{n_tfs}] Processing {tf_name}...")
-                
-    #             ax = axes[plot_idx]
-    #             plotted_any = False
-    #             rug_list = []
-    #             for label_idx, label in enumerate(labels):
-    #                 try:
-    #                     auc_subset = self.subset_label_specific_auc('auc_filtered', label)
-                        
-    #                     if tf_name not in auc_subset.columns:
-    #                         if not mute:
-    #                             print(f"    Warning: {tf_name} not found in label {label}")
-    #                         continue
-                        
-    #                     values = auc_subset[tf_name].dropna()
-    #                     rug_list.extend(values.tolist())
-    #                     # Check if we have enough valid data points
-    #                     if len(values) < 2:
-    #                         if not mute:
-    #                             print(f"    Warning: Insufficient data for {tf_name} in label {label} (n={len(values)})")
-    #                         continue
-                        
-    #                     # Check if all values are the same (would cause density plot to fail)
-    #                     if values.std() == 0:
-    #                         if not mute:
-    #                             print(f"    Warning: No variance in {tf_name} for label {label}, plotting as vertical line")
-    #                         label_name = self._get_label_name(label)
-                            
-    #                         # Use custom color if available, otherwise use default
-    #                         if int(label) in self.colors:
-    #                             color = self.colors[int(label)]
-    #                         else:
-    #                             color = default_colors[label_idx % len(default_colors)]
-                            
-    #                         ax.axvline(values.iloc[0], color=color, 
-    #                                 linestyle='--', linewidth=2, label=label_name, alpha=alpha)
-    #                         plotted_any = True
-    #                         continue
-                        
-    #                     label_name = self._get_label_name(label)
-                        
-    #                     # Use custom color if available, otherwise use default
-    #                     if int(label) in self.colors:
-    #                         color = self.colors[int(label)]
-    #                     else:
-    #                         color = default_colors[label_idx % len(default_colors)]
-                        
-    #                     # Plot density with optional fill and bandwidth adjustment
-    #                     try:
-    #                         if fill:
-    #                             values.plot.density(ax=ax, label=label_name, 
-    #                                             color=color, alpha=alpha, linewidth=2,
-    #                                             bw_method=bw_adjust)
-    #                             # Fill under the curve
-    #                             line = ax.get_lines()[-1]
-    #                             x_data = line.get_xdata()
-    #                             y_data = line.get_ydata()
-    #                             ax.fill_between(x_data, y_data, alpha=alpha, color=color)
-    #                         else:
-    #                             values.plot.density(ax=ax, label=label_name, 
-    #                                             color=color, alpha=1.0, linewidth=2,
-    #                                             bw_method=bw_adjust)
-                              
-    #                         plotted_any = True
-                            
-    #                     except Exception as plot_error:
-    #                         if not mute:
-    #                             print(f"    Warning: Could not plot density for {tf_name}, label {label}: {plot_error}")
-    #                 except Exception as e:
-    #                     if not mute:
-    #                         print(f"    Error processing label {label}: {e}")
-    #                     continue
-       
-    #             if not plotted_any:
-    #                 ax.text(0.5, 0.5, f'No data available\nfor {tf_name}', 
-    #                     ha='center', va='center', transform=ax.transAxes, fontsize=12)
-    #                 ax.set_xlim(0, 1)
-    #             else:
-    #                 # Add dissimilarity score to title
-    #                 if tf_name in dissim_scores.index:
-    #                     dissim_score = dissim_scores.loc[tf_name, 'MinMax_score']
-    #                     ax.set_title(f'{tf_name}\nDissimilarity: {dissim_score:.4f}', 
-    #                             fontsize=12, fontweight='bold')
-    #                 else:
-    #                     ax.set_title(f'{tf_name}', fontsize=12, fontweight='bold')
-                    
-    #                 ax.set_xlabel('Activity Score', fontsize=10)
-    #                 ax.set_ylabel('Density', fontsize=10)
-    #                 ax.legend(loc='best')
-    #                 ax.grid(alpha=0.3)
-    #                 ax.set_xlim(0, 1)
-    #             # Add rug plot at bottom
-    #             if rug:
-    #                 yticks = ax.get_yticks()
-    #                 tick_spacing = yticks[1] - yticks[0]
-    #                 rug_length = 0.2 * tick_spacing
-    #                 ax.eventplot(rug_list,
-    #                             orientation="horizontal",
-    #                             colors='tab:gray',
-    #                             linewidths=1,
-    #                             linelengths = rug_length,
-    #                             lineoffsets= -rug_length*0.5
-    #                         ) 
-            
-    #         # Hide unused subplots on last page
-    #         for idx in range(len(page_tfs), len(axes)):
-    #             axes[idx].axis('off')
-            
-    #         plt.tight_layout()
-            
-    #         # Save page to PDF
-    #         if save:
-    #             if single_page_mode:
-    #                 # Single page: save directly to file
-    #                 plt.savefig(pdf_path, bbox_inches='tight', dpi=300)
-    #                 print(f"\n✓ Saved {n_tfs} TFs to {pdf_path}")
-    #                 if page_idx < 2:
-    #                     print("Showing first 2 pages preview...")
-    #                     plt.show()
-    #                 plt.close(fig)
-    #             elif pdf_pages is not None:
-    #                 # Multi-page: add to PDF
-    #                 pdf_pages.savefig(fig, bbox_inches='tight')
-    #                 plt.close(fig)
-    #         else:
-    #             all_figs.append(fig)
-    #             plt.show()
-        
-    #     # Close PDF file (multi-page mode only)
-    #     if save and pdf_pages is not None:
-    #         pdf_pages.close()
-    #         print(f"\n✓ Saved {n_tfs} TFs to {pdf_path}")
-        
-    #     # Return figure(s) if not saving
-    #     if not save:
-    #         return all_figs[0] if len(all_figs) == 1 else all_figs
-    #     return None
 
     def _prepare_auc_data(self, labels: Optional[List[Union[int, str]]] = None):
         """
@@ -2377,3 +2026,4 @@ SimiCVisualization.subset_label_specific_auc = SimiCPipeline.subset_label_specif
 SimiCVisualization._load_assignment_file = _load_assignment_file
 SimiCVisualization.get_TF_network = SimiCPipeline.get_TF_network
 SimiCVisualization.get_TF_auc = SimiCPipeline.get_TF_auc
+SimiCVisualization.get_unselected_targets = SimiCPipeline.get_unselected_targets
