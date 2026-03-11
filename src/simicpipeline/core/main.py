@@ -771,82 +771,185 @@ class SimiCPipeline(SimiCBase):
                 print(f"    - {tf}: {score:.4f}")
             print()
 
-    def calculate_dissimilarity(self, select_labels=None, verbose=True):
+    def calculate_dissimilarity(self, select_labels=None, verbose=True,
+                                cell_groups: Optional[dict] = None):
         """
-        Compare AUC scores between different labels calculating dissimilarity score (0 = similar distributions, higher = more dissimilarity)
+        Compare AUC scores between different labels calculating dissimilarity score 
+        (0 = similar distributions, higher = more dissimilarity).
+        
         Args:
-            select_labels (list): List of labels to compare. If None, compare all available labels
+            select_labels (list): List of labels to compare. If None, compare all available labels.
+            verbose (bool): Whether to print progress and top results.
+            cell_groups (dict, optional): Dictionary mapping group names to cell identifiers.
+                Keys are group names (str), values are lists of cell indices (int) or 
+                cell names (str) matching the AUC DataFrame index.
+                When provided, dissimilarity is computed separately for each group,
+                returning a DataFrame with one score column per group.
+                Example:
+                    cell_groups = {
+                        'Basal-like': ['cell_1', 'cell_2', ...],
+                        'Proliferating': ['cell_5', 'cell_6', ...],
+                    }
+                You can extract these from an AnnData object:
+                    cell_groups = adata.obs.groupby('cell_type').groups
+                    cell_groups = {k: v.tolist() for k, v in cell_groups.items()}
+                Or from a DataFrame with a 'cluster' column:
+                    cell_groups = df.groupby('cluster').groups
         
         Output: 
-            pd.DataFrame with TFs and their dissimilarity scores (sorted in descending order).
+            pd.DataFrame: TFs as index, sorted by dissimilarity score (descending).
+                - If cell_groups is None: single column 'MinMax_score'.
+                - If cell_groups is provided: one column per group named '{group_name}',
+                  plus a 'mean_score' column (mean across groups).
         """
         if verbose:
             print("\n" + "="*70)
             print("CALCULATING DISSIMILARITY SCORES ACROSS LABELS")
             print("="*70 + "\n")
         try:
-            auc_filtered = self.load_results('auc_filtered')
+            self.load_results('auc_filtered')
         except FileNotFoundError as e:
-            print(f"Error loading results: {e}")
             print(f"Need auc_filtered results to compare labels.")
             self.available_results()
             return
         
         if select_labels:
-            print(f"Comparing labels {select_labels}.")
+            if verbose:
+                print(f"Comparing labels {select_labels}.")
             labels = select_labels
         else:
-            labels = list(auc_filtered.keys())
+            labels = self.labels
         if len(labels) < 2:
             print("Only one label, cannot compare!")
             return
         
+        # Load full AUC data per label
         auc_dic = {}
         for label in labels:
             auc_dic[label] = self.subset_label_specific_auc('auc_filtered', label)
-        if verbose:
-            print(f"\nCalculating dissimilarity scores...")
-        n_breaks = 100
-        MinMax_val = []
-        tf_names = auc_dic[labels[0]].columns.tolist()
         
+        tf_names = auc_dic[labels[0]].columns.tolist()
+
+        # If no cell_groups, use original logic (all cells)
+        if cell_groups is None:
+            if verbose:
+                print(f"\nCalculating dissimilarity scores (all cells)...")
+            scores = self._compute_dissimilarity_scores(auc_dic, tf_names, labels)
+            result_df = pd.DataFrame({
+                'TF': tf_names,
+                'MinMax_score': scores
+            }).set_index('TF')
+            result_df = result_df.sort_values('MinMax_score', ascending=False)
+            
+            if verbose:
+                print(f"\nTop 10 TFs by MinMax dissimilarity score:")
+                for tf, row in result_df.head(10).iterrows():
+                    print(f"  {tf}: {row['MinMax_score']:.4f}")
+            return result_df
+        
+        # --- Grouped dissimilarity ---
+        if verbose:
+            print(f"\nCalculating dissimilarity scores for {len(cell_groups)} cell groups...")
+        
+        group_scores = {}
+        for group_name, cell_ids in cell_groups.items():
+            if verbose:
+                print(f"  Processing group: {group_name} ({len(cell_ids)} cells)")
+            
+            # Subset AUC data to cells in this group for each label
+            auc_dic_group = {}
+            for label in labels:
+                auc_full = auc_dic[label]
+                # Support both index-based (str) and positional (int) cell identifiers
+                if len(cell_ids) > 0 and isinstance(cell_ids[0], (int, np.integer)):
+                    # Positional indices within the label-specific AUC
+                    valid_idx = [i for i in cell_ids if i < len(auc_full)]
+                    subset = auc_full.iloc[valid_idx]
+                else:
+                    # Cell name-based: intersect with available cells
+                    valid_cells = auc_full.index.intersection(cell_ids)
+                    subset = auc_full.loc[valid_cells]
+                
+                if len(subset) == 0:
+                    if verbose:
+                        print(f"    Warning: No cells found for group '{group_name}' in label {label}")
+                    continue
+                auc_dic_group[label] = subset
+            
+            # Need at least 2 labels with data
+            if len(auc_dic_group) < 2:
+                if verbose:
+                    print(f"    Warning: Fewer than 2 labels have cells for group '{group_name}', skipping.")
+                group_scores[group_name] = [0.0] * len(tf_names)
+                continue
+            
+            scores = self._compute_dissimilarity_scores(
+                auc_dic_group, tf_names, list(auc_dic_group.keys())
+            )
+            group_scores[group_name] = scores
+        
+        # Build result DataFrame
+        result_df = pd.DataFrame(group_scores, index=tf_names)
+        result_df.index.name = 'TF'
+        result_df['mean_score'] = result_df.mean(axis=1)
+        result_df = result_df.sort_values('mean_score', ascending=False)
+        
+        if verbose:
+            print(f"\nTop 10 TFs by mean dissimilarity score across groups:")
+            for tf in result_df.head(10).index:
+                scores_str = ", ".join(
+                    f"{g}: {result_df.loc[tf, g]:.4f}" 
+                    for g in cell_groups.keys()
+                )
+                print(f"  {tf}: mean={result_df.loc[tf, 'mean_score']:.4f} ({scores_str})")
+        
+        return result_df
+
+    def _compute_dissimilarity_scores(self, auc_dic: dict, tf_names: list, labels: list,
+                                       n_breaks: int = 100) -> list:
+        """
+        Compute MinMax dissimilarity scores for each TF across labels.
+        
+        Args:
+            auc_dic (dict): Dict mapping label -> DataFrame (cells x TFs)
+            tf_names (list): List of TF column names
+            labels (list): List of label keys to compare
+            n_breaks (int): Number of histogram bins
+            
+        Returns:
+            list: Dissimilarity score for each TF (same order as tf_names)
+        """
+        scores = []
         for tf in tf_names:
-            # Get AUC values for this TF from both labels
             Wauc_dist = {}
             for label in labels:
-                Wauc_dist[label] = np.histogram(auc_dic[label][tf].dropna(), bins=np.linspace(0, 1, n_breaks + 1), density=True)[0]
-            # Create matrix of distributions
-            # Extract the .values from each DataFrame (2D numpy arrays)
-            arrays = [df for df in Wauc_dist.values()]
+                if tf not in auc_dic[label].columns:
+                    continue
+                vals = auc_dic[label][tf].dropna()
+                if len(vals) == 0:
+                    continue
+                Wauc_dist[label] = np.histogram(
+                    vals, bins=np.linspace(0, 1, n_breaks + 1), density=True
+                )[0]
+            
+            if len(Wauc_dist) < 2:
+                scores.append(0.0)
+                continue
+            
+            arrays = list(Wauc_dist.values())
             mat = np.vstack(arrays)
-            # Remove columns with all NaN
             mat = mat[:, ~np.isnan(mat).all(axis=0)]
             
             if mat.shape[1] > 0:
-                # Calculate minmax difference
                 minmax_diff = np.nanmax(mat, axis=0) - np.nanmin(mat, axis=0)
                 variant = np.sum(np.abs(minmax_diff)) / n_breaks
-                
-                # Normalize by number of non-zero rows
                 non_zero_rows = np.sum(np.sum(mat, axis=1) != 0)
                 if non_zero_rows > 0:
                     variant = variant / non_zero_rows
             else:
                 variant = 0.0
             
-            MinMax_val.append(variant)
+            scores.append(variant)
         
-        # Create DataFrame with dissimilarity scores
-        MinMax_df = pd.DataFrame({
-            'TF': tf_names,
-            'MinMax_score': MinMax_val
-        }).set_index('TF')
-        
-        # Sort by dissimilarity score
-        MinMax_df_sorted = MinMax_df.sort_values('MinMax_score', ascending=False)
-        if verbose:
-            print(f"\nTop 10 TFs by MinMax dissimilarity score:")
-            for tf, row in MinMax_df_sorted.head(10).iterrows():
-                print(f"  {tf}: {row['MinMax_score']:.4f}")
-        
-        return MinMax_df_sorted
+        return scores
+

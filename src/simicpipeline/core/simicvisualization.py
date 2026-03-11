@@ -1568,7 +1568,7 @@ class SimiCVisualization(SimiCBase):
                     
                     results[f'{label_name}_ecdf_auc'].append(metrics['ecdf_auc'])
                     results[f'{label_name}_auc50'].append(metrics['auc_at_percentile'])
-                    results[f'{label_name}_x_at_p50'].append(metrics['x_at_percentile'])
+                    results[f'{label_name}_x_at_percentile'].append(metrics['x_at_percentile'])
                     
                 except Exception as e:
                     print(f"Warning: Error computing metrics for {tf_name}, label {label}: {e}")
@@ -1955,14 +1955,35 @@ class SimiCVisualization(SimiCBase):
 
     def plot_dissimilarity_heatmap(self, labels: Optional[List[Union[int, str]]] = None,
                                    top_n_tfs: Optional[int] = None,
+                                   cell_groups: Optional[dict] = None,
+                                   sort_by: Optional[str] = None,
+                                   cmap: str = 'viridis',
+                                   figsize: Optional[tuple] = None,
                                    save: bool = True,
                                    filename: Optional[str] = None):
         """
         Plot heatmap of regulatory dissimilarity scores.
         
+        Supports both global dissimilarity (single column) and per-group dissimilarity
+        (multiple columns, one per cell group).
+        
         Args:
             labels: Phenotype labels to compare
             top_n_tfs: Number of top TFs to display (by dissimilarity)
+            cell_groups: Dictionary mapping group names to cell identifiers.
+                Keys are group names (str), values are lists of cell indices (int) or
+                cell names (str) matching the AUC DataFrame index.
+                When provided, a multi-column heatmap is generated with one column
+                per cell group plus a 'mean_score' column.
+                Example:
+                    cell_groups = {
+                        'Basal-like': ['cell_1', 'cell_2', ...],
+                        'Proliferating': ['cell_5', 'cell_6', ...],
+                    }
+            sort_by: Column name to sort TFs by. Default: 'MinMax_score' (no groups)
+                     or 'mean_score' (with groups). Can be any group name.
+            cmap: Colormap to use (default: 'viridis')
+            figsize: Custom figure size (width, height). If None, auto-calculated.
             save: Whether to save the figure
             filename: Custom filename for saved figure
         """
@@ -1971,21 +1992,63 @@ class SimiCVisualization(SimiCBase):
         print("="*70 + "\n")
         
         # Calculate dissimilarity scores
-        dissim_df = self.calculate_dissimilarity(select_labels=labels)
+        dissim_df = self.calculate_dissimilarity(
+            select_labels=labels, 
+            cell_groups=cell_groups,
+            verbose = False
+        )
+        
+        if dissim_df is None or dissim_df.empty:
+            print("Error: No dissimilarity scores to plot.")
+            return None
+        
+        # Determine sort column
+        if sort_by is not None:
+            if sort_by not in dissim_df.columns:
+                print(f"Warning: sort_by='{sort_by}' not found in columns {dissim_df.columns.tolist()}. "
+                      f"Using first column.")
+                sort_by = dissim_df.columns[0]
+        else:
+            if 'mean_score' in dissim_df.columns:
+                sort_by = 'mean_score'
+            elif 'MinMax_score' in dissim_df.columns:
+                sort_by = 'MinMax_score'
+            else:
+                sort_by = dissim_df.columns[0]
+        
+        dissim_df = dissim_df.sort_values(sort_by, ascending=False)
         
         if top_n_tfs:
             dissim_df = dissim_df.head(top_n_tfs)
         
-        # Create heatmap using matplotlib
-        fig, ax = plt.subplots(figsize=(8, max(6, len(dissim_df) * 0.3)))
+        # Auto-calculate figure size
+        n_rows = len(dissim_df)
+        n_cols = len(dissim_df.columns)
+        if figsize is None:
+            fig_width = max(6, 2 + n_cols * 1.8)
+            fig_height = max(6, n_rows * 0.35)
+            figsize = (fig_width, fig_height)
         
-        # Create the heatmap
-        im = ax.imshow(dissim_df.values, cmap='viridis', aspect='auto')
+        # Create heatmap
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        im = ax.imshow(dissim_df.values, cmap=cmap, aspect='auto')
         
         # Set ticks and labels
-        ax.set_xticks(np.arange(len(dissim_df.columns)))
-        ax.set_yticks(np.arange(len(dissim_df.index)))
-        ax.set_xticklabels(dissim_df.columns, fontsize=10)
+        ax.set_xticks(np.arange(n_cols))
+        ax.set_yticks(np.arange(n_rows))
+        
+        # Format column labels
+        col_labels = []
+        for col in dissim_df.columns:
+            if col == 'mean_score':
+                col_labels.append('Mean')
+            elif col == 'MinMax_score':
+                col_labels.append('MinMax Score')
+            else:
+                col_labels.append(str(col))
+        
+        ax.set_xticklabels(col_labels, fontsize=10)
         ax.set_yticklabels(dissim_df.index, fontsize=8)
         
         # Rotate the x-axis labels
@@ -1996,18 +2059,28 @@ class SimiCVisualization(SimiCBase):
         cbar.set_label('Dissimilarity Score', rotation=270, labelpad=20, fontsize=10)
         
         # Annotate cells with values
-        for i in range(len(dissim_df.index)):
-            for j in range(len(dissim_df.columns)):
-                text = ax.text(j, i, f'{dissim_df.values[i, j]:.4f}',
-                             ha="center", va="center", color="white", fontsize=6)
+        # Determine text color threshold
+        vmin, vmax = dissim_df.values.min(), dissim_df.values.max()
+        threshold = (vmin + vmax) / 2
         
-        # Add title and labels
-        ax.set_title('Regulatory Dissimilarity Scores', fontsize=14, fontweight='bold', pad=20)
+        for i in range(n_rows):
+            for j in range(n_cols):
+                val = dissim_df.values[i, j]
+                text_color = "white" if val > threshold else "black"
+                ax.text(j, i, f'{val:.4f}',
+                        ha="center", va="center", color=text_color, fontsize=6)
+        
+        # Title
+        if cell_groups is not None:
+            title = f'Regulatory Dissimilarity Scores by Cell Group'
+        else:
+            title = 'Regulatory Dissimilarity Scores'
+        ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
         ax.set_ylabel('Transcription Factors', fontsize=12)
         
         # Add gridlines
-        ax.set_xticks(np.arange(len(dissim_df.columns)) - 0.5, minor=True)
-        ax.set_yticks(np.arange(len(dissim_df.index)) - 0.5, minor=True)
+        ax.set_xticks(np.arange(n_cols) - 0.5, minor=True)
+        ax.set_yticks(np.arange(n_rows) - 0.5, minor=True)
         ax.grid(which="minor", color="white", linestyle='-', linewidth=0.5)
         ax.tick_params(which="minor", size=0)
         
@@ -2022,6 +2095,7 @@ class SimiCVisualization(SimiCBase):
     
 # Export functions from SimiCPipeline
 SimiCVisualization.calculate_dissimilarity = SimiCPipeline.calculate_dissimilarity
+SimiCVisualization._compute_dissimilarity_scores = SimiCPipeline._compute_dissimilarity_scores
 SimiCVisualization.subset_label_specific_auc = SimiCPipeline.subset_label_specific_auc
 SimiCVisualization._load_assignment_file = _load_assignment_file
 SimiCVisualization.get_TF_network = SimiCPipeline.get_TF_network
