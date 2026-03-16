@@ -179,7 +179,7 @@ class SimiCBase:
                 print(f"✗ {result_type}")
         print("\n" + "="*70)
     
-def _load_assignment_file(p2assignment: Union[str, Path]) -> np.ndarray:
+def _load_assignment_file(self,p2assignment: Union[str, Path]) -> np.ndarray:
     """
     Load cell phenotype assignment from file.
     
