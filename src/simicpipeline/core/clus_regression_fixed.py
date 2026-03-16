@@ -400,7 +400,7 @@ def simicLASSO_op(*,  # Force all arguments to be keyword-only
         df = original_df
     
     if p2assignment != None:
-        assignment = _load_assignment_file(p2assignment)
+        assignment = _load_assignment_file(self.p2assignment)
 
     #### BEGIN of the regression part
     sys.stdout.flush()
