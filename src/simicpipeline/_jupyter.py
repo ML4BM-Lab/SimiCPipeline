@@ -1,5 +1,4 @@
 # src/simicpipeline/_jupyter.py
-import os
 import subprocess
 
 def jupyter():

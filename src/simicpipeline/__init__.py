@@ -18,7 +18,7 @@ except ImportError as e:
 
 try:
     from simicpipeline.core.aucprocessor import AUCProcessor
-    __all__.append("AUProcessor")
+    __all__.append("AUCProcessor")
 except ImportError as e:
     import warnings
     warnings.warn(f"Could not import AUCprocessor: {e}")

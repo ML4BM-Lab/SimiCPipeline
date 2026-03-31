@@ -11,3 +11,6 @@ dist/
 .mypy_cache/
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
+# Test coverage artifacts
+.coverage
+htmlcov/
