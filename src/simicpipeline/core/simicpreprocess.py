@@ -18,31 +18,6 @@ except ImportError:
 
 from simicpipeline.core import SimiCBase
 
-# class SimiCPreprocess(SimiCBase):
-#     """
-#     Base preprocessing pipeline for SimiC analysis.
-#     Provides common utilities for both MAGIC imputation and experiment setup.
-#     """
-
-#     def __init__(self, 
-#                  project_dir: Union[str, Path],
-#                  ):
-#         """
-#         Initialize base preprocessing pipeline.
-
-#         Args:
-#             project_dir: Directory for project files
-#         """
-#         super().__init__(project_dir = project_dir)
-    
-#     def _create_directory_structure(self) -> None:
-#         """Create standard SimiC directory structure."""
-       
-#         self.input_files_dir = self.input_path
-#         self.output_simic_dir = self.output_path
-#         self.figures_dir = self.figures_path
-#         self.matrices_dir = self.matrices_path
-
 
 class MagicPipeline(SimiCBase):
     """

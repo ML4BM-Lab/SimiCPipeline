@@ -14,32 +14,6 @@ from simicpipeline.utils.io import write_pickle
 from simicpipeline.core import SimiCBase
 from typing import Optional, Union
 
-# class BaseProcessor(SimiCBase):
-#     """
-#     Base class for SimiC processors.
-#     Provides common functionality for file handling and data loading.
-#     """
-
-
-#     def __init__(self, p2df, p2res):
-#         """
-#         Initialize the base processor.
-        
-#         Args:
-#             p2df (str): Path to dataframe pickle file
-#             p2res (str): Path to results pickle file
-#         """
-#         self.p2df = Path(p2df)
-#         self.p2res = Path(p2res)
-#         self.validate_files()
-    
-#     def validate_files(self):
-#         """Validate that required files exist."""
-#         if not self.p2df.exists():
-#             raise FileNotFoundError(f"Data file not found: {self.p2df}")
-#         if not self.p2res.exists():
-#             raise FileNotFoundError(f"Results file not found: {self.p2res}")
-
 
 class AUCProcessor(SimiCBase):
     """

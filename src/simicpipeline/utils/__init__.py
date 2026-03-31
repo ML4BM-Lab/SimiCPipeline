@@ -4,16 +4,14 @@ from simicpipeline.utils.io import (
     load_from_matrix_market,
     load_from_anndata,
     write_pickle,
-    install_package,
     format_time,
-    print_tree
+    print_tree,
 )
 
 __all__ = [
     "load_from_matrix_market",
     "load_from_anndata",
     "write_pickle",
-    "install_package",
     "format_time",
-    "print_tree"
+    "print_tree",
 ]

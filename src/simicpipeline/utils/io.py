@@ -1,19 +1,15 @@
 from __future__ import annotations
-from typing import Optional, Tuple, Union
+from typing import Optional, Union
 from pathlib import Path
 import pickle
 import pandas as pd
-import numpy as np
-from scipy.sparse import coo_matrix
-# Install packages
 
-def install_package(package_name):
-   """Install a package using pip3."""
-   import subprocess
-   import sys
-   subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
 
-# Directories
+def _install_package(package_name: str) -> None:
+    """Install a package using pip (internal utility, not part of public API)."""
+    import subprocess
+    import sys
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
 
 
 def print_tree(directory: Union[str,Path] = Path('.'),
@@ -40,7 +36,7 @@ def print_tree(directory: Union[str,Path] = Path('.'),
         │   └── utils/
         │       └── io.py
     """
-        #  Print the root directory name at the top
+    # Print the root directory name at the top
     directory = Path(directory)
     if current_depth == 0:
         print(f"{directory.name}/")
@@ -62,7 +58,7 @@ def print_tree(directory: Union[str,Path] = Path('.'),
             extension = "    " if is_last else "│   "
             print_tree(item, prefix + extension, max_depth, current_depth + 1)
 
-# Loaders
+
 def load_from_anndata(
     path: Union[str, Path],
 ) -> object:
@@ -83,15 +79,15 @@ def load_from_anndata(
 
     path = Path(path)
     adata = ad.read_h5ad(str(path))
-    if adata.raw == None:
+    if adata.raw is None:
         print("No raw attribute found in AnnData object.")
         
     return adata
 
 def load_from_matrix_market(
     matrix_path: Union[str, Path],
-    genes_path: Union[str, Path] = None,
-    cells_path: Union[str, Path] = None,
+    genes_path: Optional[Union[str, Path]] = None,
+    cells_path: Optional[Union[str, Path]] = None,
     transpose: bool = False,
     cells_index_name: str = "Cell",
 ) -> object:
@@ -127,9 +123,9 @@ def load_from_matrix_market(
     # Load names
     genes = None
     cells = None
-    if genes_path and genes_path.exists():
+    if genes_path is not None and Path(genes_path).exists():
         genes = pd.read_csv(genes_path, header=None, sep="\t").iloc[:, 0].astype(str).tolist()
-    if cells_path and cells_path.exists():
+    if cells_path is not None and Path(cells_path).exists():
         cells = pd.read_csv(cells_path, header=None, sep="\t").iloc[:, 0].astype(str).tolist()
 
     # Convert to dense for simplicity; adjust if large matrices are expected
@@ -150,7 +146,7 @@ def load_from_matrix_market(
 
     return df
 
-# Writers
+
 def write_pickle(obj, file_path):
     file_path = Path(file_path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -164,7 +160,6 @@ def write_pickle(obj, file_path):
         print(f"Pickle failed with error: {e}")
 
 
-@staticmethod
 def format_time(seconds: float) -> str:
     """
     Format time duration in human-readable format.
@@ -185,5 +180,3 @@ def format_time(seconds: float) -> str:
         return f"{minutes}min {secs}s"
     else:
         return f"{secs}s"
-
-###########################################################################################
